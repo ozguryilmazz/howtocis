@@ -27,12 +27,10 @@ const SHOW_CAP := 5.0
 
 ## Gösteri bonusları. Her biri çarpana eklenir: 1 + toplam, en fazla SHOW_CAP.
 const BONUS := {
-	"air": ["Havada", 1.0],
 	"head": ["Kafadan", 1.0],
 	"spin": ["360", 1.0],
 	"one": ["Tek vuruş", 0.5],
 	"noscope": ["Nişansız", 0.5],
-	"juggle": ["Zincir", 0.25],
 }
 
 

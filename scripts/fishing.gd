@@ -1,7 +1,10 @@
 extends Node3D
 ## Balık tutma döngüsü:
-##   At → bekle → vuruş (ÇEK!) → sar (gerginliği yeşilde tut) → balık havaya fırlar
-##   → yumrukla vur (havadayken vurmak gösteri çarpanını artırır) → kovaya.
+##   At → bekle → ÇEK! → sar (gerginliği yeşilde tut)
+##   → balık oltanın ucunda asılı çırpınır; oyuncu onu karaya taşır ve Bırak'a basar
+##     (5 saniye içinde bırakmazsa balık kendiliğinden düşer)
+##   → balık yerde zıplaya zıplaya kaçışır; yumrukla vura vura öldürülür
+##   → Al ile ele alınır, Balıkçı Teyze'ye götürülüp satılır.
 ## Silahlar 3. aşamada dükkândan alınacak; o zamana kadar yumruk.
 
 const C := preload("res://scripts/creatures.gd")
@@ -9,13 +12,15 @@ const FISH := preload("res://scripts/fish.gd")
 const FLAT := preload("res://shaders/flat.gdshader")
 
 const CAST_DIST := 9.0
-const LAUNCH_DIST := 2.5
+const LIFT_DIST := 1.8
+const HANG_TIME := 5.0
+const PICK_RANGE := 2.6
 const WATER_Y := -0.25
 
 ## Yumruk. Silahlar da aynı alanlarla tanımlanacak (hasar, menzil, bekleme, itme).
 const FISTS := {"name": "Yumruk", "damage": 1, "reach": 3.0, "cooldown": 0.32, "push": 0.8}
 
-enum S { IDLE, CASTING, WAITING, BITE, REELING, FIGHT }
+enum S { IDLE, CASTING, WAITING, BITE, REELING, HANGING, FIGHT, PICKUP }
 
 var world: Node
 var player: Node
@@ -38,8 +43,9 @@ var _surge := 0.0
 var _zone := Vector2(0.25, 0.8)
 var _species := ""
 var _fish: Node3D = null
+var _held: Node3D = null
 var _bonuses: Array = []
-var _air_hits := 0
+var _lift_from := Vector3.ZERO
 var _cooldown := 0.0
 var _punch_t := 0.0
 
@@ -67,7 +73,9 @@ func setup(p_world: Node, p_player: Node, p_touch: Node, p_hud: Node) -> void:
 	_zone = Vector2(clampf(0.52 - half, 0.08, 0.5), clampf(0.52 + half, 0.55, 0.9))
 	_build_gear()
 	player.fainted.connect(_on_fainted)
+	Game.bucket_changed.connect(_refresh_hand)
 	_set_idle()
+	_refresh_hand()
 	hud.message("İskelenin ucuna yürü, denize dön ve At'a bas.", 6.0)
 
 
@@ -180,11 +188,15 @@ func _build_gear() -> void:
 
 
 func _draw_line(sag: float) -> void:
+	if _bobber.visible:
+		_draw_line_to(_bobber.global_position + Vector3(0, 0.1, 0), sag)
+	else:
+		_line_mesh.clear_surfaces()
+
+
+func _draw_line_to(b: Vector3, sag: float) -> void:
 	_line_mesh.clear_surfaces()
-	if not _bobber.visible:
-		return
 	var a := _rod_tip.global_position
-	var b := _bobber.global_position + Vector3(0, 0.1, 0)
 	_line_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
 	for i in 13:
 		var t := i / 12.0
@@ -210,7 +222,7 @@ func _set_idle() -> void:
 
 func _try_cast() -> void:
 	if Game.bucket_full():
-		hud.message("Kova dolu! Balıkçı Teyze'ye sat.")
+		hud.message("Elinde balık var! Balıkçı Teyze'ye götür ve sat.")
 		return
 	_dir = player.facing()
 	var start: Vector3 = player.global_position
@@ -259,49 +271,71 @@ func _start_reel() -> void:
 func _fail(text: String) -> void:
 	hud.message(text)
 	_log("kaçtı: " + text)
+	if _fish and is_instance_valid(_fish) and _fish.state != "gone":
+		_fish.queue_free()
+	_fish = null
 	_set_idle()
 
 
-func _launch() -> void:
-	state = S.FIGHT
+## Balık sudan çıkar ve oltanın ucunda asılı kalır.
+func _lift() -> void:
+	state = S.HANGING
 	player.locked = false
 	hud.hide_tension()
 	_bobber.visible = false
-	_draw_line(0)
-	_rod.visible = false
-	_fist.visible = true
-	touch.set_action("Vur")
-	hud.prompt("")
-	hud.message("Havadayken vur!", 1.8)
+	touch.set_action("Bırak", true, true)
+	_timer = HANG_TIME
+	hud.message("Balığı karaya getir ve Bırak'a bas!", 2.6)
 
 	var since := int(Game.data.get("since_shiny", 0))
 	_fish = FISH.new()
 	_fish.setup(world, player, _species, C.roll_size(rng), C.roll_shiny(rng, since))
 	world.add_child(_fish)
-	var start := Vector3(_bobber.global_position.x, 0.0, _bobber.global_position.z)
-	_fish.global_position = start
-	# Kolayda balık daha yavaş düşer ve daha uzun havada kalır.
+	_lift_from = Vector3(_bobber.global_position.x, WATER_Y, _bobber.global_position.z)
+	_fish.global_position = _lift_from
 	var assist := float(_diff["aim_assist"])
 	_fish.gravity = 9.0 - 3.0 * assist
-	# Balık oyuncunun başının biraz üstünden geçip arkasına düşer: tepe noktası yumruk menzilinde.
-	var g: float = _fish.gravity
-	var land: Vector3 = player.global_position - _dir * 1.2
-	var peak: float = player.global_position.y + 2.9 + 0.5 * assist
-	var vy := sqrt(2.0 * g * maxf(peak - start.y, 0.5))
-	var drop: float = peak - (land.y + 0.3)
-	var flight := vy / g + sqrt(2.0 * maxf(drop, 0.1) / g)
-	var v := (land - start) / flight
-	v.y = vy
-	_fish.velocity = v
+	_fish.hop_scale = 1.25 - 0.6 * assist
 	_fish.died.connect(_on_fish_died)
 	_fish.escaped.connect(_on_fish_escaped)
 	_fish.attacked.connect(_on_fish_attacked)
 	_fish.inked.connect(_on_fish_inked)
 	_bonuses.clear()
-	_air_hits = 0
 	if _fish.shiny:
 		hud.popup("✦ PARLAK! ✦")
-	_log("fırladı " + _species)
+	_log("asılı " + _species)
+
+
+func _hang_point() -> Vector3:
+	return _rod_tip.global_position + Vector3(0, -0.35 - _fish.length * 0.5, 0)
+
+
+func _hanging(delta: float, tap: bool) -> void:
+	if _fish == null or not is_instance_valid(_fish):
+		_set_idle()
+		return
+	# İlk yarım saniyede balık sudan oltanın ucuna yükselir.
+	var t := clampf((HANG_TIME - _timer) / 0.5, 0.0, 1.0)
+	_fish.global_position = _lift_from.lerp(_hang_point(), t)
+	_draw_line_to(_fish.global_position + Vector3(0, _fish.length * 0.45, 0), 0.0)
+	_timer -= delta
+	hud.prompt("%d" % ceili(maxf(_timer, 0.0)))
+	if tap and t >= 1.0:
+		_release("Bıraktın!")
+	elif _timer <= 0.0:
+		_release("Balık oltadan düştü!")
+
+
+func _release(text: String) -> void:
+	state = S.FIGHT
+	hud.prompt("")
+	_line_mesh.clear_surfaces()
+	_fish.drop()
+	_rod.visible = false
+	_fist.visible = true
+	touch.set_action("Vur")
+	hud.message(text + " Yere düşünce vur.", 2.0)
+	_log("bırak")
 
 
 func _punch() -> void:
@@ -310,6 +344,11 @@ func _punch() -> void:
 	_cooldown = float(weapon["cooldown"])
 	_punch_t = 0.18
 	if _fish == null or not is_instance_valid(_fish):
+		return
+	if _fish.state == "fall":
+		hud.popup("Yere düşsün!")
+		return
+	if _fish.state != "ground":
 		return
 	var cam: Camera3D = player.camera
 	var aim: Vector3 = player.aim()
@@ -321,41 +360,27 @@ func _punch() -> void:
 		hud.popup("Uzak!")
 		return
 	var cone := 24.0 + 18.0 * assist
-	var ang := rad_to_deg(aim.angle_to(to_body))
-	if ang > cone and to_body.length() > 1.0:
+	if rad_to_deg(aim.angle_to(to_body)) > cone and to_body.length() > 1.0:
 		hud.popup("Iska!")
 		return
-	var was_air: bool = _fish.state == "air"
 	var full_hp: bool = _fish.hits == 0
 	var head := rad_to_deg(aim.angle_to(to_head)) < 9.0 + 8.0 * assist and to_head.length() < to_body.length() + 0.05
 	var spun: bool = player.spin_recent() >= 330.0
 	var damage := int(weapon["damage"])
-	# Vurulan balık hafifçe oyuncuya doğru geri süzülür, böylece zincir kurulabilir.
-	# Zorda vuruş balığı ileri iter; denize düşürmemek oyuncunun işi.
-	var back: Vector3 = player.global_position - _fish.global_position
-	back.y = 0.0
-	var drift: Vector3 = back * (0.25 + 0.35 * assist) + player.facing() * float(weapon["push"]) * (1.0 - assist)
+	# Kolayda vuruş balığı oyuncuya doğru, zorda denize doğru iter.
+	var drift: Vector3 = player.facing() * (0.9 - 1.2 * assist)
 	if _fish.hp - damage <= 0:
-		# Bonuslar balık ölmeden önce yazılmalı; ölünce kovaya hemen eklenir.
-		if was_air:
-			_bonuses.append("air")
+		# Bonuslar balık ölmeden önce yazılmalı.
 		if head:
 			_bonuses.append("head")
 		if spun:
 			_bonuses.append("spin")
 		if full_hp:
 			_bonuses.append("one")
-		for i in _air_hits:
-			_bonuses.append("juggle")
 		_slowmo()
-		_fish.hit(drift, damage)
-	else:
-		_fish.hit(drift, damage)
-		if was_air:
-			_air_hits += 1
-			hud.popup("Zincir ×%d!" % _air_hits if _air_hits > 1 else "Pat!")
-		else:
-			hud.popup("Pat!")
+	_fish.hit(drift, damage)
+	if _fish.state != "dead":
+		hud.popup("Pat!")
 
 
 func _slowmo() -> void:
@@ -364,21 +389,63 @@ func _slowmo() -> void:
 
 
 func _on_fish_died() -> void:
+	state = S.PICKUP
+	touch.set_action("Al", true, true)
+	hud.message("Yakaladın! Balığı Al.", 2.0)
+	_log("öldü " + _fish.species)
+
+
+func _pickup(tap: bool) -> void:
+	if _fish == null or not is_instance_valid(_fish):
+		_set_idle()
+		return
+	var flat: Vector3 = _fish.global_position - player.global_position
+	flat.y = 0.0
+	var near := flat.length() <= PICK_RANGE
+	player.assist_toward(_fish.global_position, 2.0 * float(_diff["aim_assist"]), get_physics_process_delta_time())
+	if not tap:
+		return
+	if not near:
+		hud.message("Balığın yanına git.", 1.2)
+		return
 	var f := _fish
 	var show := C.show_multiplier(_bonuses)
 	var value := C.price(f.species, f.size_mult, show, f.shiny, float(_diff["sell_bonus"]))
 	var cm := int(round(float(f.info["cm"]) * f.size_mult))
+	_fish = null
+	f.queue_free()
 	Game.add_catch({"id": f.species, "cm": cm, "size": f.size_mult, "show": show,
 		"shiny": f.shiny, "value": value, "bonuses": _bonuses.duplicate()})
 	hud.show_catch(f.info["name"], "%d cm" % cm, C.bonus_lines(_bonuses), show, value, f.shiny)
-	_log("tutuldu %s %dcm show=%s değer=%d bonus=%s" % [f.species, cm, show, value, _bonuses])
-	_fish = null
+	hud.message("Balıkçı Teyze'ye götür ve sat.", 3.0)
+	_log("aldı %s %dcm show=%s değer=%d bonus=%s" % [f.species, cm, show, value, _bonuses])
 	_set_idle()
+
+
+## Eldeki balığın görüntüsü: kovadaki ilk balık sol elde durur.
+func _refresh_hand() -> void:
+	var b := Game.bucket()
+	if b.is_empty():
+		if _held and is_instance_valid(_held):
+			_held.queue_free()
+		_held = null
+		return
+	if _held and is_instance_valid(_held):
+		return
+	var e: Dictionary = b[0]
+	if not C.SPECIES.has(str(e.get("id", ""))):
+		return
+	_held = FISH.new()
+	_held.setup(world, player, str(e["id"]), float(e.get("size", 1.0)), bool(e.get("shiny", false)))
+	player.camera.add_child(_held)
+	_held.make_held()
+	_held.position = Vector3(-0.3, -0.24, -0.62)
+	_held.scale = Vector3.ONE * clampf(0.26 / _held.length, 0.2, 1.0)
 
 
 func _on_fish_escaped(reason: String) -> void:
 	_fish = null
-	_fail("Balık denize düştü, kaçtı!" if reason == "water" else "Balık çırpına çırpına denize kaçtı!")
+	_fail("Balık denize düştü, kaçtı!" if reason == "water" else "Balık kaçtı!")
 
 
 func _on_fish_attacked(damage: float) -> void:
@@ -392,9 +459,6 @@ func _on_fish_inked() -> void:
 
 
 func _on_fainted() -> void:
-	if _fish and is_instance_valid(_fish):
-		_fish.queue_free()
-	_fish = null
 	_fail("Bayıldın! Balık kaçtı.")
 
 
@@ -446,12 +510,15 @@ func _physics_process(delta: float) -> void:
 				_fail("Yemi kaptı, kaçtı! Daha hızlı çek.")
 		S.REELING:
 			_reel(delta, held)
+		S.HANGING:
+			_hanging(delta, tap)
 		S.FIGHT:
-			if _fish and is_instance_valid(_fish):
-				if _fish.state == "air" or _fish.state == "ground":
-					player.assist_toward(_fish.global_position, 3.0 * float(_diff["aim_assist"]), delta)
+			if _fish and is_instance_valid(_fish) and _fish.state == "ground":
+				player.assist_toward(_fish.global_position, 3.0 * float(_diff["aim_assist"]), delta)
 			if tap:
 				_punch()
+		S.PICKUP:
+			_pickup(tap)
 
 
 func _bob(_delta: float, amp: float) -> void:
@@ -491,9 +558,9 @@ func _reel(delta: float, held: bool) -> void:
 	var side := _dir.cross(Vector3.UP) * sin(Time.get_ticks_msec() * 0.006) * 0.8
 	_bobber.global_position = Vector3(base.x + side.x, WATER_Y + sin(Time.get_ticks_msec() * 0.02) * 0.06, base.z + side.z)
 	_draw_line(0.05)
-	hud.show_tension(_tension, _zone, maxf(_dist - LAUNCH_DIST, 0.0))
-	if _dist <= LAUNCH_DIST:
-		_launch()
+	hud.show_tension(_tension, _zone, maxf(_dist - LIFT_DIST, 0.0))
+	if _dist <= LIFT_DIST:
+		_lift()
 
 
 # --- Otomatik pilot (yalnızca test) -----------------------------------------
@@ -506,12 +573,36 @@ func _log(s: String) -> void:
 	var dir := OS.get_environment("BALIK_SHOT")
 	if dir != "":
 		var tag := s.split(" ")[0]
-		var delay: float = {"at": 1.2, "vuruş": 0.3, "sar": 1.5, "fırladı": 0.5, "tutuldu": 0.6}.get(tag, -1.0)
+		var delay: float = {"sar": 1.5, "asılı": 0.8, "bırak": 1.4, "öldü": 0.5, "aldı": 0.5, "sattı": 0.3}.get(tag, -1.0)
 		if delay >= 0.0:
 			var n := _auto_log.size()
 			_auto_log.append(tag)
 			get_tree().create_timer(delay).timeout.connect(func():
 				get_viewport().get_texture().get_image().save_png("%s/%02d_%s.png" % [dir, n, tag]))
+
+
+var _auto_path: Array = []
+
+
+## Oyuncuyu hedefe yürütür; varınca true döner.
+func _auto_walk(target: Vector3, stop := 0.6) -> bool:
+	var to: Vector3 = target - player.global_position
+	to.y = 0.0
+	if to.length() <= stop:
+		touch.move_vector = Vector2.ZERO
+		return true
+	player.rotation.y = atan2(-to.x, -to.z)
+	touch.move_vector = Vector2(0, -1)
+	return false
+
+
+func _auto_follow(path: Array) -> bool:
+	while not path.is_empty():
+		if _auto_walk(path[0]):
+			path.pop_front()
+		else:
+			return false
+	return true
 
 
 func _autopilot(delta: float) -> Array:
@@ -520,7 +611,22 @@ func _autopilot(delta: float) -> Array:
 	match state:
 		S.IDLE:
 			if Game.bucket_full():
+				if _auto_path.is_empty():
+					_auto_path = [Vector3(-2, 0, -12), Vector3(4, 0, -6)]
+					_log("satmaya gidiyor")
+				if _auto_follow(_auto_path):
+					var n := Game.bucket().size()
+					world.call("_on_sell")
+					_log("sattı %d balık, para=%d" % [n, Game.money()])
 				return [false, false]
+			if player.global_position.z > -29.0:
+				if _auto_path.is_empty():
+					_auto_path = [Vector3(-2, 0, -12), Vector3(-2, 0, -31)]
+				_auto_follow(_auto_path)
+				return [false, false]
+			_auto_path.clear()
+			touch.move_vector = Vector2.ZERO
+			player.rotation.y = 0.0
 			_timer -= delta
 			if _timer < -0.5:
 				_timer = 0.0
@@ -529,11 +635,18 @@ func _autopilot(delta: float) -> Array:
 			tap = _timer < float(_diff["bite_window"]) * 0.6
 		S.REELING:
 			held = _tension < (_zone.x + _zone.y) * 0.5
-		S.FIGHT:
+		S.HANGING:
+			if OS.has_environment("BALIK_DENIZ"):
+				return [false, false]  # test: denize bakarken kendiliğinden düşsün
+			player.rotation.y = PI  # karaya dön
+			tap = _timer < HANG_TIME - 1.2
+		S.FIGHT, S.PICKUP:
 			if _fish and is_instance_valid(_fish):
+				var near := _auto_walk(_fish.global_position, 1.4)
 				player.assist_toward(_fish.global_position, 12.0, delta)
-				var d: float = _fish.global_position.distance_to(player.camera.global_position)
-				tap = d < float(weapon["reach"]) and _fish.state == "air"
-				if _fish.state == "ground":
-					tap = d < float(weapon["reach"]) and _fish._ground_time > 1.0
+				if state == S.PICKUP:
+					tap = near
+				else:
+					var d: float = _fish.global_position.distance_to(player.camera.global_position)
+					tap = d < float(weapon["reach"]) and _fish.state == "ground"
 	return [tap, held]

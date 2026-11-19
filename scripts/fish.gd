@@ -1,6 +1,11 @@
 extends Node3D
-## Sudan fırlatılan canlı. Havada uçar, karaya düşerse çırpınır, suya düşerse kaçar.
-## Yumrukla vurulunca yeniden havaya kalkar; canı bitince tutulmuş sayılır.
+## Oltaya takılan canlı. Durumlar:
+##   hang   : oltanın ucunda asılı, çırpınır
+##   fall   : bırakıldı, düşüyor (havadayken vurulamaz)
+##   ground : yerde zıplaya zıplaya kaçışır; yumrukla vurulur
+##   dead   : öldü, yerde yatar; oyuncu "Al" ile eline alır
+##   held   : oyuncunun elinde (yalnızca görüntü)
+##   gone   : suya kaçtı
 
 signal died
 signal escaped(reason: String)
@@ -10,7 +15,6 @@ signal inked
 const FLAT := preload("res://shaders/flat.gdshader")
 const C := preload("res://scripts/creatures.gd")
 
-const FLOP_TIME := 6.0
 const WATER_Y := -0.3
 
 var species := "istavrit"
@@ -23,12 +27,16 @@ var hits := 0
 var length := 0.4
 var velocity := Vector3.ZERO
 var gravity := 9.0
-var state := "air"  # air, ground, dead, gone
+var state := "hang"
+## Zıplama gücü çarpanı (zorluğa göre fishing.gd ayarlar).
+var hop_scale := 1.0
 var world: Node = null
 var player: Node3D = null
 
 var _spin := Vector3.ZERO
-var _ground_time := 0.0
+var _t := 0.0
+## Havada mı (zıplama, düşme)? Hız sıfırdan geçerken durmasın diye ayrı tutulur.
+var _airborne := false
 var _flop_timer := 0.0
 var _bite_timer := 1.0
 var _flash := 0.0
@@ -175,57 +183,74 @@ func _update_label() -> void:
 
 
 func _process(delta: float) -> void:
-	if state == "dead" or state == "gone":
+	if state == "gone" or state == "held":
 		return
+	_t += delta
 	if _flash > 0.0:
 		_flash -= delta
 		var on := _flash > 0.0
 		for m in _mats:
 			m.set_shader_parameter("albedo", Color.WHITE if on else m.get_meta("c", Color.WHITE))
 	match state:
-		"air":
-			velocity.y -= gravity * delta
-			position += velocity * delta
+		"hang":
+			# Ağzından asılı: başı yukarıda, kuyruğu sağa sola çırpar.
+			_visual.rotation = Vector3(PI * 0.5, sin(_t * 9.0) * 0.4, sin(_t * 17.0) * 0.8)
+		"fall":
+			_move(delta)
 			_visual.rotation += _spin * delta
-			var h: float = world.ground_height(position)
-			if is_nan(h):
-				if position.y <= WATER_Y:
-					_gone("water")
-			elif position.y <= h + radius() and velocity.y < 0.0:
-				_land(h)
 		"ground":
-			_ground_time += delta
+			_move(delta)
 			_flop_timer -= delta
-			if velocity != Vector3.ZERO:
-				velocity.y -= gravity * delta
-				position += velocity * delta
-				var h2: float = world.ground_height(position)
-				if is_nan(h2):
-					if position.y <= WATER_Y:
-						_gone("water")
-						return
-				elif position.y <= h2 + radius():
-					position.y = h2 + radius()
-					velocity = Vector3.ZERO
-			if _flop_timer <= 0.0:
-				_flop_timer = randf_range(0.5, 0.9)
-				velocity = Vector3(randf_range(-0.3, 0.3), 2.2, randf_range(-0.3, 0.3))
-				_visual.rotation = Vector3(0, randf() * TAU, PI * 0.5 * (1 if randf() < 0.5 else -1))
+			if _flop_timer <= 0.0 and not _airborne:
+				_hop()
 			if info.get("bites", false) and player:
 				_bite_timer -= delta
 				if _bite_timer <= 0.0 and player.global_position.distance_to(global_position) < 2.2:
 					_bite_timer = 1.4
 					attacked.emit(10.0)
-			if _ground_time > FLOP_TIME:
-				_gone("flop")
+		"dead":
+			_move(delta)
 
 
-func _land(h: float) -> void:
-	state = "ground"
-	position.y = h + radius()
-	velocity = Vector3.ZERO
-	_ground_time = 0.0
-	_flop_timer = 0.3
+## Yerçekimiyle hareket; zemine değince durur, denize düşerse kaçar.
+func _move(delta: float) -> void:
+	if not _airborne:
+		return
+	velocity.y -= gravity * delta
+	position += velocity * delta
+	var h: float = world.ground_height(position)
+	if is_nan(h):
+		if position.y <= WATER_Y:
+			_gone("water")
+	elif position.y <= h + radius() and velocity.y < 0.0:
+		position.y = h + radius()
+		velocity = Vector3.ZERO
+		_airborne = false
+		if state == "fall":
+			state = "ground"
+			_flop_timer = 0.25
+		if state != "hang":
+			_visual.rotation = Vector3(0, _visual.rotation.y, PI * 0.5)
+
+
+## Rastgele bir yöne zıplar.
+func _hop() -> void:
+	var a := randf() * TAU
+	var speed := randf_range(1.2, 2.2) * (0.7 + float(info["pull"])) * hop_scale
+	velocity = Vector3(cos(a) * speed, randf_range(2.6, 3.6), sin(a) * speed)
+	_airborne = true
+	_flop_timer = randf_range(0.35, 0.8)
+	_visual.rotation = Vector3(randf_range(-0.4, 0.4), a, PI * 0.5 * (1 if randf() < 0.5 else -1))
+
+
+## Oltadan bırakılır, aşağı düşer.
+func drop() -> void:
+	if state != "hang":
+		return
+	state = "fall"
+	velocity = Vector3(0, 0.5, 0)
+	_airborne = true
+	_spin = Vector3(randf_range(-4, 4), randf_range(-2, 2), randf_range(-5, 5))
 
 
 func _gone(reason: String) -> void:
@@ -236,9 +261,9 @@ func _gone(reason: String) -> void:
 	tw.tween_callback(queue_free)
 
 
-## Vuruş. drift: vuruştan sonraki yatay hız. Ölürse true döner.
+## Vuruş. drift: vuruştan sonraki yatay hız. Yalnızca yerdeyken vurulabilir. Ölürse true döner.
 func hit(drift: Vector3, damage: int) -> bool:
-	if state != "air" and state != "ground":
+	if state != "ground":
 		return false
 	hits += 1
 	hp -= damage
@@ -249,18 +274,28 @@ func hit(drift: Vector3, damage: int) -> bool:
 	if info.get("ink", false) and not _inked:
 		_inked = true
 		inked.emit()
+	velocity = Vector3(drift.x, 2.2, drift.z)
+	_airborne = true
 	if hp <= 0:
 		hp = 0
-		_update_label()
 		state = "dead"
+		_label.text = "Al"
+		_label.modulate = Color("D85A30")
+		_label.font_size = 56
 		died.emit()
-		var tw := create_tween()
-		tw.tween_property(self, "scale", Vector3.ONE * 1.4, 0.08)
-		tw.tween_property(self, "scale", Vector3.ONE * 0.01, 0.22)
-		tw.tween_callback(queue_free)
 		return true
 	_update_label()
-	state = "air"
-	velocity = Vector3(drift.x, 6.0, drift.z)
-	_spin = Vector3(randf_range(-8, 8), randf_range(-4, 4), randf_range(-9, 9))
+	_flop_timer = 0.6
 	return false
+
+
+## Oyuncunun eline alınır: etiket gizlenir, fizik durur.
+func make_held() -> void:
+	state = "held"
+	velocity = Vector3.ZERO
+	_airborne = false
+	_label.visible = false
+	for c in get_children():
+		if c is OmniLight3D:
+			c.light_energy = 0.4
+	_visual.rotation = Vector3(0.2, PI * 0.5, 0.3)

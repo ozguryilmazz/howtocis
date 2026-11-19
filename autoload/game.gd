@@ -7,7 +7,8 @@ signal data_loaded
 signal bucket_changed
 
 const SAVE_PATH := "user://save.json"
-const BUCKET_MAX := 10
+## Oyuncu bir seferde elinde tek balık taşır (dükkân yükseltmeleri 3. aşamada).
+const BUCKET_MAX := 1
 const CLOUD_SAVE_DELAY := 3.0
 
 const DIFFICULTIES := {

@@ -118,8 +118,8 @@ func popup(text: String) -> void:
 	_pop_time = 0.9
 
 
-func set_bucket(n: int, max_n: int, value: int) -> void:
-	_bucket.text = "Kova %d/%d  ·  %s altın değerinde" % [n, max_n, Game.format_money(value)] if n > 0 else "Kova boş"
+func set_bucket(text: String) -> void:
+	_bucket.text = text
 
 
 func set_hp(hp: float) -> void:
@@ -161,7 +161,7 @@ func show_catch(title: String, subtitle: String, lines: Array, show: float, valu
 		_card_text.add_child(row)
 	if lines.is_empty():
 		var none := _label(22, Color("7A6A55"))
-		none.text = "Havada vurursan değeri katlanır!"
+		none.text = "Kafasına vur, tek vuruşta bitir: değeri katlanır!"
 		_card_text.add_child(none)
 	var total := _label(36, BROWN)
 	total.text = "Gösteri ×%s  →  %s altın" % [_fmt(show), Game.format_money(value)]

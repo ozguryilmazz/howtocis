@@ -115,10 +115,10 @@ func _ready() -> void:
 	box.add_child(_hint)
 
 	_update_btn = Button.new()
-	_update_btn.visible = false
+	_update_btn.text = "Güncellemeleri kontrol et"
 	_update_btn.custom_minimum_size = Vector2(0, 64)
 	_update_btn.add_theme_font_size_override("font_size", 26)
-	_update_btn.pressed.connect(Updater.open_download)
+	_update_btn.pressed.connect(_on_update_pressed)
 	style_button(_update_btn)
 	box.add_child(_update_btn)
 
@@ -163,7 +163,25 @@ func _on_play() -> void:
 
 func _on_update(version: String) -> void:
 	_update_btn.text = "Yeni sürüm var: v%s  —  İndir ve kur" % version
-	_update_btn.visible = true
+	_update_btn.disabled = false
+
+
+## Güncelleme varsa indirir; yoksa GitHub'a yeniden sorar ve sonucu düğmede gösterir.
+func _on_update_pressed() -> void:
+	if Updater.has_update:
+		Updater.open_download()
+		return
+	_update_btn.text = "Kontrol ediliyor…"
+	_update_btn.disabled = true
+	var result: String = await Updater.check()
+	_update_btn.disabled = false
+	match result:
+		"yeni":
+			_on_update(Updater.latest_version)
+		"guncel":
+			_update_btn.text = "En son sürümdesin (v%s)  —  Tekrar kontrol et" % Game.version()
+		_:
+			_update_btn.text = "İnternete bağlanılamadı  —  Tekrar dene"
 
 
 func _refresh_status() -> void:

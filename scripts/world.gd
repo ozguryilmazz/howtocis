@@ -8,6 +8,7 @@ const PLAYER := preload("res://scripts/player.gd")
 const TOUCH := preload("res://scripts/touch_controls.gd")
 const FISHING := preload("res://scripts/fishing.gd")
 const FISHING_HUD := preload("res://scripts/fishing_hud.gd")
+const C := preload("res://scripts/creatures.gd")
 
 const SKY := Color("F7E3C6")
 const SAND := Color("D8C49A")
@@ -25,6 +26,8 @@ const SELL_RANGE := 4.0
 const PIER_MIN := Vector2(-3.5, -33.0)
 const PIER_MAX := Vector2(-0.5, -15.0)
 const PIER_TOP := 0.475
+## Kumsaldan iskeleye çıkan rampa (z: -15 → -11.5)
+const RAMP_Z := Vector2(-15.0, -11.5)
 const BEACH_CENTER := Vector2(0, 12)
 const BEACH_RADIUS := 30.0
 
@@ -51,6 +54,8 @@ func _ready() -> void:
 func ground_height(p: Vector3) -> float:
 	if p.x >= PIER_MIN.x and p.x <= PIER_MAX.x and p.z >= PIER_MIN.y and p.z <= PIER_MAX.y:
 		return PIER_TOP
+	if p.x >= PIER_MIN.x and p.x <= PIER_MAX.x and p.z > RAMP_Z.x and p.z <= RAMP_Z.y:
+		return lerpf(PIER_TOP, 0.1, (p.z - RAMP_Z.x) / (RAMP_Z.y - RAMP_Z.x))
 	if Vector2(p.x, p.z).distance_to(BEACH_CENTER) <= BEACH_RADIUS:
 		return 0.1
 	return NAN
@@ -201,7 +206,7 @@ func _build_town() -> void:
 			add_mesh(cyl(0.25, 0.25, 0.45, 6), WOOD, kh + t + s + Vector3(0, 0.22, 0))
 	sign_label("Kahvehane", kh + Vector3(0, 3.6, 0))
 
-	# Balıkçı Teyze'nin tezgâhı (satış 3. aşamada gelecek)
+	# Balıkçı Teyze'nin tezgâhı: balık burada satılır
 	var st := STALL
 	add_mesh(box(Vector3(3.4, 1.0, 1.2)), WOOD, st + Vector3(0, 0.5, 0), Vector3.ZERO, true)
 	add_mesh(box(Vector3(3.8, 0.12, 1.8)), Color("378ADD"), st + Vector3(0, 2.4, -0.2))
@@ -212,6 +217,11 @@ func _build_town() -> void:
 
 	# İskele denize doğru uzanır
 	add_mesh(box(Vector3(3, 0.35, 18)), WOOD, Vector3(-2, 0.3, -24), Vector3.ZERO, true)
+	# Rampa: kumsaldan iskeleye yürüyerek çıkılsın diye
+	var ramp_len := RAMP_Z.y - RAMP_Z.x
+	var slope := atan2(PIER_TOP - 0.1, ramp_len)
+	add_mesh(box(Vector3(3, 0.2, ramp_len / cos(slope) + 0.1)), WOOD,
+		Vector3(-2, (PIER_TOP + 0.1) * 0.5 - 0.1, (RAMP_Z.x + RAMP_Z.y) * 0.5), Vector3(rad_to_deg(slope), 0, 0), true)
 	for z in range(-32, -15, 4):
 		for x in [-3.4, -0.6]:
 			add_mesh(cyl(0.14, 0.14, 2.2, 6), DARK_WOOD, Vector3(x, -0.6, z))
@@ -333,17 +343,24 @@ func _update_money(value: int) -> void:
 
 
 func _update_bucket() -> void:
-	hud.set_bucket(Game.bucket().size(), Game.bucket_max(), Game.bucket_value())
+	hud.set_bucket(_hand_text() if not Game.bucket().is_empty() else "Elin boş")
+
+
+func _hand_text() -> String:
+	var b := Game.bucket()
+	var name := "%d balık" % b.size()
+	if b.size() == 1:
+		name = str(C.SPECIES.get(str(b[0].get("id", "")), {}).get("name", "Balık"))
+	return "Elinde: %s · %s altın" % [name, Game.format_money(Game.bucket_value())]
 
 
 func _process(_delta: float) -> void:
 	var near := player.global_position.distance_to(STALL) < SELL_RANGE and not Game.bucket().is_empty()
 	_sell.visible = near
 	if near:
-		_sell.text = "Balıkçı Teyze'ye sat: %d balık · %s altın" % [Game.bucket().size(), Game.format_money(Game.bucket_value())]
+		_sell.text = "Sat: " + _hand_text().trim_prefix("Elinde: ")
 
 
 func _on_sell() -> void:
-	var n := Game.bucket().size()
 	var got := Game.sell_all()
-	hud.message("Balıkçı Teyze %d balığı aldı: +%s altın" % [n, Game.format_money(got)], 3.0)
+	hud.message("Balıkçı Teyze balığı aldı: +%s altın" % Game.format_money(got), 3.0)
