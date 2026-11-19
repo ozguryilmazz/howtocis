@@ -6,6 +6,8 @@ const FLAT := preload("res://shaders/flat.gdshader")
 const WATER := preload("res://shaders/water.gdshader")
 const PLAYER := preload("res://scripts/player.gd")
 const TOUCH := preload("res://scripts/touch_controls.gd")
+const FISHING := preload("res://scripts/fishing.gd")
+const FISHING_HUD := preload("res://scripts/fishing_hud.gd")
 
 const SKY := Color("F7E3C6")
 const SAND := Color("D8C49A")
@@ -18,9 +20,20 @@ const DARK_WOOD := Color("7A5A3A")
 const OLIVE := Color("7C8B4A")
 const ROCK := Color("B4B2A9")
 
+const STALL := Vector3(5, 0.1, -4)
+const SELL_RANGE := 4.0
+const PIER_MIN := Vector2(-3.5, -33.0)
+const PIER_MAX := Vector2(-0.5, -15.0)
+const PIER_TOP := 0.475
+const BEACH_CENTER := Vector2(0, 12)
+const BEACH_RADIUS := 30.0
+
 var player: CharacterBody3D
+var fishing: Node3D
+var hud: Control
 var _mats := {}
 var _money_label: Label
+var _sell: Button
 
 
 func _ready() -> void:
@@ -30,6 +43,21 @@ func _ready() -> void:
 	_build_distance()
 	_spawn_player()
 	_build_hud()
+
+
+# --- Zemin ---------------------------------------------------------------
+
+## Bir noktanın altındaki zeminin yüksekliği; altı denizse NAN.
+func ground_height(p: Vector3) -> float:
+	if p.x >= PIER_MIN.x and p.x <= PIER_MAX.x and p.z >= PIER_MIN.y and p.z <= PIER_MAX.y:
+		return PIER_TOP
+	if Vector2(p.x, p.z).distance_to(BEACH_CENTER) <= BEACH_RADIUS:
+		return 0.1
+	return NAN
+
+
+func is_water(p: Vector3) -> bool:
+	return is_nan(ground_height(p))
 
 
 # --- Yardımcılar ---------------------------------------------------------
@@ -174,12 +202,13 @@ func _build_town() -> void:
 	sign_label("Kahvehane", kh + Vector3(0, 3.6, 0))
 
 	# Balıkçı Teyze'nin tezgâhı (satış 3. aşamada gelecek)
-	var st := Vector3(5, 0.1, -4)
+	var st := STALL
 	add_mesh(box(Vector3(3.4, 1.0, 1.2)), WOOD, st + Vector3(0, 0.5, 0), Vector3.ZERO, true)
 	add_mesh(box(Vector3(3.8, 0.12, 1.8)), Color("378ADD"), st + Vector3(0, 2.4, -0.2))
 	for x in [-1.7, 1.7]:
 		add_mesh(cyl(0.06, 0.06, 2.4, 5), DARK_WOOD, st + Vector3(x, 1.2, 0.5))
 	sign_label("Balıkçı Teyze", st + Vector3(0, 3.1, 0))
+	sign_label("Balık alınır", st + Vector3(0, 1.4, -0.7), 40)
 
 	# İskele denize doğru uzanır
 	add_mesh(box(Vector3(3, 0.35, 18)), WOOD, Vector3(-2, 0.3, -24), Vector3.ZERO, true)
@@ -219,9 +248,13 @@ func _build_distance() -> void:
 func _spawn_player() -> void:
 	player = PLAYER.new()
 	player.position = Vector3(-2, 0.2, -6)
+	var args := OS.get_cmdline_user_args()
 	# Geliştirme: "-- --kasaba" ile başlatılınca kamera kasabaya bakar (ekran görüntüsü için).
-	if "--kasaba" in OS.get_cmdline_user_args():
+	if "--kasaba" in args:
 		player.rotation.y = PI
+	# Geliştirme: iskelenin ucundan başla.
+	if "--iskele" in args or "--otomatik" in args:
+		player.position = Vector3(-2, 0.6, -31)
 	add_child(player)
 
 
@@ -229,9 +262,33 @@ func _build_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 
+	hud = FISHING_HUD.new()
+	layer.add_child(hud)
+
 	var touch := TOUCH.new()
 	layer.add_child(touch)
 	player.touch = touch
+
+	fishing = FISHING.new()
+	add_child(fishing)
+	fishing.setup(self, player, touch, hud)
+	fishing.autopilot = "--otomatik" in OS.get_cmdline_user_args()
+	player.hp_changed.connect(hud.set_hp)
+	Game.bucket_changed.connect(_update_bucket)
+	_update_bucket()
+
+	_sell = Button.new()
+	_sell.anchor_left = 0.5
+	_sell.anchor_right = 0.5
+	_sell.offset_left = -330
+	_sell.offset_right = 330
+	_sell.offset_top = 64
+	_sell.offset_bottom = 134
+	_sell.add_theme_font_size_override("font_size", 28)
+	preload("res://scripts/main_menu.gd").style_button(_sell)
+	_sell.visible = false
+	_sell.pressed.connect(_on_sell)
+	layer.add_child(_sell)
 
 	_money_label = Label.new()
 	_money_label.position = Vector2(20, 16)
@@ -273,3 +330,20 @@ func _build_hud() -> void:
 
 func _update_money(value: int) -> void:
 	_money_label.text = "%s altın" % Game.format_money(value)
+
+
+func _update_bucket() -> void:
+	hud.set_bucket(Game.bucket().size(), Game.bucket_max(), Game.bucket_value())
+
+
+func _process(_delta: float) -> void:
+	var near := player.global_position.distance_to(STALL) < SELL_RANGE and not Game.bucket().is_empty()
+	_sell.visible = near
+	if near:
+		_sell.text = "Balıkçı Teyze'ye sat: %d balık · %s altın" % [Game.bucket().size(), Game.format_money(Game.bucket_value())]
+
+
+func _on_sell() -> void:
+	var n := Game.bucket().size()
+	var got := Game.sell_all()
+	hud.message("Balıkçı Teyze %d balığı aldı: +%s altın" % [n, Game.format_money(got)], 3.0)

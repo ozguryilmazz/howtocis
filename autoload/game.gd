@@ -4,8 +4,10 @@ extends Node
 
 signal money_changed(value: int)
 signal data_loaded
+signal bucket_changed
 
 const SAVE_PATH := "user://save.json"
+const BUCKET_MAX := 10
 const CLOUD_SAVE_DELAY := 3.0
 
 const DIFFICULTIES := {
@@ -27,7 +29,50 @@ func _ready() -> void:
 
 
 func _defaults() -> Dictionary:
-	return {"save_version": 1, "money": 0, "difficulty": "", "updated_at": 0}
+	return {"save_version": 2, "money": 0, "difficulty": "", "updated_at": 0,
+		"bucket": [], "caught": 0, "since_shiny": 0, "best_show": 1.0}
+
+
+# --- Kova: tutulan balıklar satılana kadar burada durur ----------------
+
+func bucket() -> Array:
+	if not (data.get("bucket") is Array):
+		data["bucket"] = []
+	return data["bucket"]
+
+
+func bucket_max() -> int:
+	return BUCKET_MAX
+
+
+func bucket_full() -> bool:
+	return bucket().size() >= BUCKET_MAX
+
+
+func bucket_value() -> int:
+	var v := 0
+	for f in bucket():
+		v += int(f.get("value", 0))
+	return v
+
+
+## Tutulan balığı kovaya koyar ve istatistikleri günceller.
+func add_catch(entry: Dictionary) -> void:
+	bucket().append(entry)
+	data["caught"] = int(data.get("caught", 0)) + 1
+	data["since_shiny"] = 0 if entry.get("shiny", false) else int(data.get("since_shiny", 0)) + 1
+	data["best_show"] = maxf(float(data.get("best_show", 1.0)), float(entry.get("show", 1.0)))
+	bucket_changed.emit()
+	save()
+
+
+## Kovadaki her şeyi satar, kazancı döner.
+func sell_all() -> int:
+	var total := bucket_value()
+	data["bucket"] = []
+	bucket_changed.emit()
+	add_money(total)
+	return total
 
 
 func version() -> String:
@@ -105,6 +150,7 @@ func _on_signed_in() -> void:
 		if f:
 			f.store_string(JSON.stringify(data))
 		money_changed.emit(money())
+		bucket_changed.emit()
 		data_loaded.emit()
 	elif int(cloud.get("updated_at", 0)) < int(data.get("updated_at", 0)):
 		Firebase.save(data)

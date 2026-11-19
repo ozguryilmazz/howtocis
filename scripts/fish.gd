@@ -1,0 +1,266 @@
+extends Node3D
+## Sudan fırlatılan canlı. Havada uçar, karaya düşerse çırpınır, suya düşerse kaçar.
+## Yumrukla vurulunca yeniden havaya kalkar; canı bitince tutulmuş sayılır.
+
+signal died
+signal escaped(reason: String)
+signal attacked(damage: float)
+signal inked
+
+const FLAT := preload("res://shaders/flat.gdshader")
+const C := preload("res://scripts/creatures.gd")
+
+const FLOP_TIME := 6.0
+const WATER_Y := -0.3
+
+var species := "istavrit"
+var info: Dictionary = {}
+var size_mult := 1.0
+var shiny := false
+var hp := 1
+var max_hp := 1
+var hits := 0
+var length := 0.4
+var velocity := Vector3.ZERO
+var gravity := 9.0
+var state := "air"  # air, ground, dead, gone
+var world: Node = null
+var player: Node3D = null
+
+var _spin := Vector3.ZERO
+var _ground_time := 0.0
+var _flop_timer := 0.0
+var _bite_timer := 1.0
+var _flash := 0.0
+var _visual: Node3D
+var _label: Label3D
+var _mats: Array[ShaderMaterial] = []
+var _inked := false
+
+
+func setup(p_world: Node, p_player: Node3D, p_species: String, p_size: float, p_shiny: bool) -> void:
+	world = p_world
+	player = p_player
+	species = p_species
+	info = C.SPECIES[species]
+	size_mult = p_size
+	shiny = p_shiny
+	var hp_mult := float(Game.difficulty()["creature_hp"])
+	max_hp = maxi(1, int(round(int(info["hp"]) * hp_mult)))
+	hp = max_hp
+	length = float(info["cm"]) / 100.0 * size_mult * 1.6  # oyunda görünsün diye biraz büyük
+	_build()
+
+
+func head_position() -> Vector3:
+	return _visual.global_transform * Vector3(0, 0, -length * 0.4)
+
+
+func radius() -> float:
+	return length * 0.3
+
+
+func _mat(color: Color) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = FLAT
+	m.set_shader_parameter("albedo", color)
+	m.set_shader_parameter("glow", 0.45)
+	_mats.append(m)
+	return m
+
+
+func _part(mesh: Mesh, color: Color, pos: Vector3, rot := Vector3.ZERO, scl := Vector3.ONE) -> MeshInstance3D:
+	mesh.material = _mat(color)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.position = pos
+	mi.rotation_degrees = rot
+	mi.scale = scl
+	_visual.add_child(mi)
+	return mi
+
+
+func _build() -> void:
+	_visual = Node3D.new()
+	add_child(_visual)
+	var body := Color(info["body"])
+	var fin := Color(info["fin"])
+	if shiny:
+		body = Color("F2C94C")
+		fin = Color("E8A33D")
+		var glow := OmniLight3D.new()
+		glow.light_color = Color("FFE08A")
+		glow.light_energy = 1.5
+		glow.omni_range = 3.0
+		add_child(glow)
+	var L := length
+
+	if info["shape"] == "squid":
+		var mantle := CylinderMesh.new()
+		mantle.top_radius = 0.0
+		mantle.bottom_radius = L * 0.22
+		mantle.height = L * 0.7
+		mantle.radial_segments = 7
+		mantle.rings = 0
+		_part(mantle, body, Vector3(0, 0, -L * 0.1), Vector3(-90, 0, 0))
+		for i in 6:
+			var a := TAU * i / 6.0
+			var t := CylinderMesh.new()
+			t.top_radius = L * 0.03
+			t.bottom_radius = L * 0.012
+			t.height = L * 0.45
+			t.radial_segments = 4
+			t.rings = 0
+			_part(t, fin, Vector3(cos(a) * L * 0.1, sin(a) * L * 0.1, L * 0.45), Vector3(90, 0, 0))
+		for s in [-1, 1]:
+			var e := SphereMesh.new()
+			e.radius = L * 0.05
+			e.height = L * 0.1
+			e.radial_segments = 6
+			e.rings = 3
+			_part(e, Color("1B1B1B"), Vector3(s * L * 0.17, L * 0.05, L * 0.2))
+	else:
+		var tall := 0.75 if info["shape"] == "round" else 0.5
+		var b := SphereMesh.new()
+		b.radius = 0.5
+		b.height = 1.0
+		b.radial_segments = 8
+		b.rings = 4
+		_part(b, body, Vector3.ZERO, Vector3.ZERO, Vector3(L * 0.28, L * tall * 0.7, L * 0.8))
+		var tail := CylinderMesh.new()
+		tail.top_radius = 0.0
+		tail.bottom_radius = L * 0.22
+		tail.height = L * 0.3
+		tail.radial_segments = 3
+		tail.rings = 0
+		_part(tail, fin, Vector3(0, 0, L * 0.45), Vector3(-90, 0, 0), Vector3(0.25, 1, 1))
+		var dorsal := CylinderMesh.new()
+		dorsal.top_radius = 0.0
+		dorsal.bottom_radius = L * 0.12
+		dorsal.height = L * 0.16
+		dorsal.radial_segments = 3
+		dorsal.rings = 0
+		_part(dorsal, fin, Vector3(0, L * tall * 0.33, L * 0.05), Vector3.ZERO, Vector3(0.2, 1, 1.6))
+		for s in [-1, 1]:
+			var e := SphereMesh.new()
+			e.radius = L * 0.045
+			e.height = L * 0.09
+			e.radial_segments = 6
+			e.rings = 3
+			_part(e, Color("1B1B1B"), Vector3(s * L * 0.12, L * 0.06, -L * 0.28))
+
+	_label = Label3D.new()
+	_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_label.no_depth_test = true
+	_label.fixed_size = true
+	_label.pixel_size = 0.0012
+	_label.font_size = 40
+	_label.outline_size = 10
+	_label.outline_modulate = Color.WHITE
+	_label.modulate = Color("4A2A12")
+	_label.position = Vector3(0, L * 0.5 + 0.25, 0)
+	add_child(_label)
+	_update_label()
+	_spin = Vector3(randf_range(-5, 5), randf_range(-3, 3), randf_range(-6, 6))
+
+
+func _update_label() -> void:
+	var pips := ""
+	for i in max_hp:
+		pips += "●" if i < hp else "○"
+	var title: String = info["name"]
+	if shiny:
+		title = "✦ " + title + " ✦"
+	_label.text = "%s\n%s" % [title, pips]
+
+
+func _process(delta: float) -> void:
+	if state == "dead" or state == "gone":
+		return
+	if _flash > 0.0:
+		_flash -= delta
+		var on := _flash > 0.0
+		for m in _mats:
+			m.set_shader_parameter("albedo", Color.WHITE if on else m.get_meta("c", Color.WHITE))
+	match state:
+		"air":
+			velocity.y -= gravity * delta
+			position += velocity * delta
+			_visual.rotation += _spin * delta
+			var h: float = world.ground_height(position)
+			if is_nan(h):
+				if position.y <= WATER_Y:
+					_gone("water")
+			elif position.y <= h + radius() and velocity.y < 0.0:
+				_land(h)
+		"ground":
+			_ground_time += delta
+			_flop_timer -= delta
+			if velocity != Vector3.ZERO:
+				velocity.y -= gravity * delta
+				position += velocity * delta
+				var h2: float = world.ground_height(position)
+				if is_nan(h2):
+					if position.y <= WATER_Y:
+						_gone("water")
+						return
+				elif position.y <= h2 + radius():
+					position.y = h2 + radius()
+					velocity = Vector3.ZERO
+			if _flop_timer <= 0.0:
+				_flop_timer = randf_range(0.5, 0.9)
+				velocity = Vector3(randf_range(-0.3, 0.3), 2.2, randf_range(-0.3, 0.3))
+				_visual.rotation = Vector3(0, randf() * TAU, PI * 0.5 * (1 if randf() < 0.5 else -1))
+			if info.get("bites", false) and player:
+				_bite_timer -= delta
+				if _bite_timer <= 0.0 and player.global_position.distance_to(global_position) < 2.2:
+					_bite_timer = 1.4
+					attacked.emit(10.0)
+			if _ground_time > FLOP_TIME:
+				_gone("flop")
+
+
+func _land(h: float) -> void:
+	state = "ground"
+	position.y = h + radius()
+	velocity = Vector3.ZERO
+	_ground_time = 0.0
+	_flop_timer = 0.3
+
+
+func _gone(reason: String) -> void:
+	state = "gone"
+	escaped.emit(reason)
+	var tw := create_tween()
+	tw.tween_property(self, "scale", Vector3.ONE * 0.01, 0.3)
+	tw.tween_callback(queue_free)
+
+
+## Vuruş. drift: vuruştan sonraki yatay hız. Ölürse true döner.
+func hit(drift: Vector3, damage: int) -> bool:
+	if state != "air" and state != "ground":
+		return false
+	hits += 1
+	hp -= damage
+	_flash = 0.12
+	for m in _mats:
+		if not m.has_meta("c"):
+			m.set_meta("c", m.get_shader_parameter("albedo"))
+	if info.get("ink", false) and not _inked:
+		_inked = true
+		inked.emit()
+	if hp <= 0:
+		hp = 0
+		_update_label()
+		state = "dead"
+		died.emit()
+		var tw := create_tween()
+		tw.tween_property(self, "scale", Vector3.ONE * 1.4, 0.08)
+		tw.tween_property(self, "scale", Vector3.ONE * 0.01, 0.22)
+		tw.tween_callback(queue_free)
+		return true
+	_update_label()
+	state = "air"
+	velocity = Vector3(drift.x, 6.0, drift.z)
+	_spin = Vector3(randf_range(-8, 8), randf_range(-4, 4), randf_range(-9, 9))
+	return false
