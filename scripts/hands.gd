@@ -72,7 +72,8 @@ static func fist(left := false, arm := 0.26) -> Node3D:
 
 
 ## Olta: sap Y ekseni boyunca, uç y = length. Sap mantar, gövde lacivert, makara gümüş.
-## Döndürür: [kök düğüm, uç düğümü]
+## Makara oltanın sol yanındadır (-X); kolu dış yüzdedir.
+## Döndürür: [kök düğüm, uç düğümü, makara kolu topuzu]
 static func rod(length := 1.05) -> Array:
 	var r := Node3D.new()
 	# Mantar sap
@@ -81,13 +82,18 @@ static func rod(length := 1.05) -> Array:
 	# Makara yuvası ve makara (sapın altında)
 	cyl(r, 0.014, 0.014, 0.05, 6, Vector3(0, 0.29, 0), Vector3.ZERO, Color("2B2B2B"))
 	var reel := Node3D.new()
-	reel.position = Vector3(0, 0.29, 0.045)
+	reel.position = Vector3(-0.05, 0.29, 0)
 	r.add_child(reel)
-	box(reel, Vector3(0.012, 0.02, 0.04), Vector3(0, 0, -0.02), Vector3.ZERO, Color("8D949E"))
-	cyl(reel, 0.04, 0.04, 0.035, 10, Vector3(0, 0, 0.025), Vector3(90, 0, 0), Color("C9CED6"))
-	cyl(reel, 0.03, 0.03, 0.04, 10, Vector3(0, 0, 0.025), Vector3(90, 0, 0), Color("E2A93B"))
-	box(reel, Vector3(0.05, 0.008, 0.008), Vector3(0.03, 0, 0.05), Vector3.ZERO, Color("8D949E"))
-	cyl(reel, 0.008, 0.008, 0.025, 6, Vector3(0.055, 0, 0.06), Vector3(90, 0, 0), Color("2B2B2B"))
+	# Ayak (oltaya bağlanır), makara gövdesi ve ipek sarılı bobin; ekseni X boyunca
+	box(reel, Vector3(0.04, 0.02, 0.012), Vector3(0.025, 0, 0), Vector3.ZERO, Color("8D949E"))
+	cyl(reel, 0.04, 0.04, 0.035, 10, Vector3(-0.005, 0, 0), Vector3(0, 0, 90), Color("C9CED6"))
+	cyl(reel, 0.03, 0.03, 0.04, 10, Vector3(-0.005, 0, 0), Vector3(0, 0, 90), Color("E2A93B"))
+	# Kol: dış yüzde, ucunda topuz
+	box(reel, Vector3(0.008, 0.008, 0.055), Vector3(-0.028, 0, 0.025), Vector3.ZERO, Color("8D949E"))
+	cyl(reel, 0.009, 0.009, 0.03, 6, Vector3(-0.042, 0, 0.05), Vector3(0, 0, 90), Color("2B2B2B"))
+	var knob := Node3D.new()
+	knob.position = reel.position + Vector3(-0.045, 0, 0.05)
+	r.add_child(knob)
 	# Gövde: incelen lacivert çubuk
 	var blank_len := length - 0.32
 	cyl(r, 0.004, 0.011, blank_len, 6, Vector3(0, 0.32 + blank_len * 0.5, 0), Vector3.ZERO, Color("1F3A5F"))
@@ -99,4 +105,4 @@ static func rod(length := 1.05) -> Array:
 	var tip := Node3D.new()
 	tip.position = Vector3(0, length, 0.01)
 	r.add_child(tip)
-	return [r, tip]
+	return [r, tip, knob]

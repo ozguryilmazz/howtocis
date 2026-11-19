@@ -70,19 +70,17 @@ func _ready() -> void:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color("FFF8EC")
 	sb.border_color = TERRA
-	sb.set_border_width_all(5)
-	sb.set_corner_radius_all(18)
-	sb.content_margin_left = 34
-	sb.content_margin_right = 34
-	sb.content_margin_top = 20
-	sb.content_margin_bottom = 22
+	sb.set_border_width_all(4)
+	sb.set_corner_radius_all(14)
+	sb.content_margin_left = 20
+	sb.content_margin_right = 20
+	sb.content_margin_top = 12
+	sb.content_margin_bottom = 14
 	_card.add_theme_stylebox_override("panel", sb)
-	_card.anchor_left = 0.5
-	_card.anchor_right = 0.5
-	_card.anchor_top = 0.5
-	_card.anchor_bottom = 0.5
-	_card.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_card.grow_vertical = Control.GROW_DIRECTION_BOTH
+	# Kart sol kenarda durur: ortadaki el ve balığı kapatmaz.
+	_card.position = Vector2(20, 170)
+	_card.grow_horizontal = Control.GROW_DIRECTION_END
+	_card.grow_vertical = Control.GROW_DIRECTION_END
 	_card.mouse_filter = MOUSE_FILTER_IGNORE
 	_card.visible = false
 	add_child(_card)
@@ -149,21 +147,22 @@ func hide_tension() -> void:
 func show_catch(title: String, subtitle: String, lines: Array, show: float, value: int, shiny: bool) -> void:
 	for c in _card_text.get_children():
 		c.queue_free()
-	var t := _label(40, TERRA if not shiny else Color("B7791F"))
+	_card.size = Vector2.ZERO
+	var t := _label(30, TERRA if not shiny else Color("B7791F"))
 	t.text = ("✦ PARLAK ✦  " if shiny else "") + title
 	_card_text.add_child(t)
-	var s := _label(24, BROWN)
+	var s := _label(20, BROWN)
 	s.text = subtitle
 	_card_text.add_child(s)
 	for ln in lines:
-		var row := _label(26, Color("185FA5"))
+		var row := _label(20, Color("185FA5"))
 		row.text = "%s  %s" % [ln[0], ln[1]]
 		_card_text.add_child(row)
 	if lines.is_empty():
-		var none := _label(22, Color("7A6A55"))
+		var none := _label(17, Color("7A6A55"))
 		none.text = "Kafasına vur, tek vuruşta bitir: değeri katlanır!"
 		_card_text.add_child(none)
-	var total := _label(36, BROWN)
+	var total := _label(26, BROWN)
 	total.text = "Gösteri ×%s  →  %s altın" % [_fmt(show), Game.format_money(value)]
 	_card_text.add_child(total)
 	_card.visible = true

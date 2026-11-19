@@ -121,8 +121,10 @@ func _build_gear() -> void:
 	var rh := HANDS.fist(false, 0.3)
 	_grip(rh, _rod.transform * Vector3(0, 0.12, 0), Vector3(0.35, -0.75, 0.55), axis)
 	cam.add_child(rh)
+	# Sol el makaranın kolunu tutar (makara oltanın sol yanında).
+	var knob: Node3D = built[2]
 	var lh := HANDS.fist(true, 0.3)
-	_grip(lh, _rod.transform * Vector3(0, 0.36, 0), Vector3(-0.6, -0.55, 0.55), axis)
+	_grip(lh, _rod.transform * knob.position + Vector3(-0.06, -0.025, 0.02), Vector3(-0.4, -0.75, 0.5), _rod.transform.basis.x)
 	cam.add_child(lh)
 	_rod_hands = [rh, lh]
 
@@ -271,6 +273,9 @@ func _start_wait() -> void:
 func _start_bite() -> void:
 	state = S.BITE
 	_species = C.roll_species(rng)
+	# Geliştirme: BALIK_TUR ile hep aynı tür gelir (test için).
+	if C.SPECIES.has(OS.get_environment("BALIK_TUR")):
+		_species = OS.get_environment("BALIK_TUR")
 	_timer = 1.0 * float(_diff["bite_window"])
 	hud.prompt("ÇEK!")
 	touch.set_action("ÇEK!", true, true)

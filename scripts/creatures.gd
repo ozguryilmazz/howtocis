@@ -3,6 +3,8 @@ extends RefCounted
 ## Sayılar bu oyuna özeldir: base = temel fiyat (altın), hp = yumruk sayısı,
 ## pull = misinayı çekme gücü (0..1), weight = ne sık geldiği.
 
+## shape "model" olan türler kendi 3B model dosyasını (glb) ve animasyonlarını kullanır.
+## model_len: modelin ölçeksiz boyu (m); balık boyuna göre ölçeklenir.
 const SPECIES := {
 	"istavrit": {"name": "İstavrit", "base": 8, "hp": 1, "pull": 0.25, "weight": 30, "cm": 18,
 		"body": "8FB3C9", "fin": "4E7A96", "shape": "fish"},
@@ -12,6 +14,10 @@ const SPECIES := {
 		"body": "D9D4C4", "fin": "C9A227", "shape": "round"},
 	"barbunya": {"name": "Barbunya", "base": 22, "hp": 2, "pull": 0.45, "weight": 12, "cm": 20,
 		"body": "E07A5F", "fin": "F2CC8F", "shape": "fish"},
+	"fener": {"name": "Fener Balığı", "base": 30, "hp": 3, "pull": 0.5, "weight": 14, "cm": 45,
+		"body": "5A2A1E", "fin": "A8A27A", "shape": "model",
+		"model": "res://models/anglerfish.glb", "model_len": 5.5,
+		"anim_flop": "Fish_Armature|Out_Of_Water", "anim_die": "Fish_Armature|Death"},
 	"levrek": {"name": "Levrek", "base": 28, "hp": 3, "pull": 0.55, "weight": 9, "cm": 45,
 		"body": "A7B4AE", "fin": "4F5D57", "shape": "fish"},
 	"murekkep": {"name": "Mürekkep Balığı", "base": 38, "hp": 3, "pull": 0.6, "weight": 5, "cm": 35,

@@ -44,6 +44,10 @@ var _visual: Node3D
 var _label: Label3D
 var _mats: Array[ShaderMaterial] = []
 var _inked := false
+## Model dosyalı türler için
+var _anim: AnimationPlayer = null
+var _model_meshes: Array = []
+var _flash_mat: StandardMaterial3D = null
 
 
 func setup(p_world: Node, p_player: Node3D, p_species: String, p_size: float, p_shiny: bool) -> void:
@@ -103,7 +107,9 @@ func _build() -> void:
 		add_child(glow)
 	var L := length
 
-	if info["shape"] == "squid":
+	if info["shape"] == "model":
+		_build_model(L)
+	elif info["shape"] == "squid":
 		var mantle := CylinderMesh.new()
 		mantle.top_radius = 0.0
 		mantle.bottom_radius = L * 0.22
@@ -172,6 +178,51 @@ func _build() -> void:
 	_spin = Vector3(randf_range(-5, 5), randf_range(-3, 3), randf_range(-6, 6))
 
 
+## glb modelini yükler: boyu ayarlar, burnu -Z'ye çevirir, çırpınma animasyonunu başlatır.
+func _build_model(L: float) -> void:
+	var scene: PackedScene = load(str(info["model"]))
+	var m: Node3D = scene.instantiate()
+	var s := L / float(info.get("model_len", 1.0))
+	m.scale = Vector3.ONE * s
+	m.rotation.y = PI  # modelin burnu +Z'de, bizim balıklarımız -Z'ye bakar
+	_visual.add_child(m)
+	for mi in m.find_children("*", "MeshInstance3D", true, false):
+		_model_meshes.append(mi)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	if shiny:
+		var gold := StandardMaterial3D.new()
+		gold.albedo_color = Color(1.0, 0.8, 0.25, 0.55)
+		gold.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		gold.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		for mi in _model_meshes:
+			mi.material_overlay = gold
+	_anim = m.find_child("AnimationPlayer", true, false)
+	if _anim and _anim.has_animation(str(info.get("anim_flop", ""))):
+		_anim.get_animation(str(info["anim_flop"])).loop_mode = Animation.LOOP_LINEAR
+		_anim.play(str(info["anim_flop"]))
+
+
+func _play_death() -> void:
+	if _anim and _anim.has_animation(str(info.get("anim_die", ""))):
+		_anim.play(str(info["anim_die"]))
+
+
+func _flash_model(on: bool) -> void:
+	if _model_meshes.is_empty():
+		return
+	if _flash_mat == null:
+		_flash_mat = StandardMaterial3D.new()
+		_flash_mat.albedo_color = Color(1, 1, 1, 0.8)
+		_flash_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_flash_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	for mi in _model_meshes:
+		if on:
+			mi.set_meta("ov", mi.material_overlay)
+			mi.material_overlay = _flash_mat
+		elif mi.has_meta("ov"):
+			mi.material_overlay = mi.get_meta("ov")
+
+
 func _update_label() -> void:
 	var pips := ""
 	for i in max_hp:
@@ -191,6 +242,8 @@ func _process(delta: float) -> void:
 		var on := _flash > 0.0
 		for m in _mats:
 			m.set_shader_parameter("albedo", Color.WHITE if on else m.get_meta("c", Color.WHITE))
+		if not on:
+			_flash_model(false)
 	match state:
 		"hang":
 			# Ağzından asılı: başı yukarıda, kuyruğu sağa sola çırpar.
@@ -268,6 +321,7 @@ func hit(drift: Vector3, damage: int) -> bool:
 	hits += 1
 	hp -= damage
 	_flash = 0.12
+	_flash_model(true)
 	for m in _mats:
 		if not m.has_meta("c"):
 			m.set_meta("c", m.get_shader_parameter("albedo"))
@@ -279,6 +333,7 @@ func hit(drift: Vector3, damage: int) -> bool:
 	if hp <= 0:
 		hp = 0
 		state = "dead"
+		_play_death()
 		_label.text = "Al"
 		_label.modulate = Color("D85A30")
 		_label.font_size = 56
@@ -294,6 +349,7 @@ func make_held() -> void:
 	state = "held"
 	velocity = Vector3.ZERO
 	_airborne = false
+	_play_death()
 	_label.visible = false
 	for c in get_children():
 		if c is OmniLight3D:
