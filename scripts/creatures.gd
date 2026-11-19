@@ -3,28 +3,31 @@ extends RefCounted
 ## Sayılar bu oyuna özeldir: base = temel fiyat (altın), hp = yumruk sayısı,
 ## pull = misinayı çekme gücü (0..1), weight = ne sık geldiği.
 
-## shape "model" olan türler kendi 3B model dosyasını (glb) ve animasyonlarını kullanır.
-## model_len: modelin ölçeksiz boyu (m); balık boyuna göre ölçeklenir.
+## Her tür kendi 3B modelini (glb, Quaternius, CC0) ve animasyonlarını kullanır.
+## model_len: modelin ölçeksiz boyu (m); oyundaki balık boyuna göre ölçeklenir.
+## body / fin: model yüklenemezse kullanılan yedek renkler.
+## bites: yerdeyken yakındaki oyuncuya zarar verir. puffs: ilk vuruşta şişer.
 const SPECIES := {
-	"istavrit": {"name": "İstavrit", "base": 8, "hp": 1, "pull": 0.25, "weight": 30, "cm": 18,
-		"body": "8FB3C9", "fin": "4E7A96", "shape": "fish"},
-	"kefal": {"name": "Kefal", "base": 12, "hp": 2, "pull": 0.35, "weight": 24, "cm": 30,
-		"body": "B9C2C7", "fin": "6F7E86", "shape": "fish"},
-	"cipura": {"name": "Çipura", "base": 16, "hp": 2, "pull": 0.4, "weight": 18, "cm": 28,
-		"body": "D9D4C4", "fin": "C9A227", "shape": "round"},
-	"barbunya": {"name": "Barbunya", "base": 22, "hp": 2, "pull": 0.45, "weight": 12, "cm": 20,
-		"body": "E07A5F", "fin": "F2CC8F", "shape": "fish"},
+	"palyaco": {"name": "Palyaço Balığı", "base": 9, "hp": 1, "pull": 0.25, "weight": 30, "cm": 15,
+		"model": "res://models/fish/palyaco.glb", "model_len": 5.27, "body": "F28C28", "fin": "FFFFFF"},
+	"japon": {"name": "Mavi Japon Balığı", "base": 13, "hp": 2, "pull": 0.35, "weight": 26, "cm": 20,
+		"model": "res://models/fish/japon.glb", "model_len": 5.64, "body": "3C7DD9", "fin": "9CC3F0"},
+	"balon": {"name": "Balon Balığı", "base": 22, "hp": 2, "pull": 0.45, "weight": 18, "cm": 30,
+		"model": "res://models/fish/balon.glb", "model_len": 4.02, "body": "D9C27A", "fin": "8A7A4A",
+		"puffs": true},
 	"fener": {"name": "Fener Balığı", "base": 30, "hp": 3, "pull": 0.5, "weight": 14, "cm": 45,
-		"body": "5A2A1E", "fin": "A8A27A", "shape": "model",
-		"model": "res://models/anglerfish.glb", "model_len": 5.5,
-		"anim_flop": "Fish_Armature|Out_Of_Water", "anim_die": "Fish_Armature|Death"},
-	"levrek": {"name": "Levrek", "base": 28, "hp": 3, "pull": 0.55, "weight": 9, "cm": 45,
-		"body": "A7B4AE", "fin": "4F5D57", "shape": "fish"},
-	"murekkep": {"name": "Mürekkep Balığı", "base": 38, "hp": 3, "pull": 0.6, "weight": 5, "cm": 35,
-		"body": "C98BB9", "fin": "8E5A85", "shape": "squid", "ink": true},
-	"kirlangic": {"name": "Kırlangıç", "base": 55, "hp": 4, "pull": 0.75, "weight": 2, "cm": 40,
-		"body": "D1495B", "fin": "3D85C6", "shape": "fish", "bites": true},
+		"model": "res://models/fish/fener.glb", "model_len": 5.53, "body": "5A2A1E", "fin": "A8A27A"},
+	"aslan": {"name": "Aslan Balığı", "base": 48, "hp": 3, "pull": 0.65, "weight": 7, "cm": 35,
+		"model": "res://models/fish/aslan.glb", "model_len": 6.35, "body": "C0392B", "fin": "F5E6D3",
+		"bites": true, "bite_text": "Dikeni battı!"},
 }
+
+## Tüm balık modellerinde ortak animasyon adları
+const ANIM_FLOP := "Fish_Armature|Out_Of_Water"
+const ANIM_DIE := "Fish_Armature|Death"
+
+## Eski kayıtlardaki artık olmayan türler için yedek
+const FALLBACK := "palyaco"
 
 const SHINY_CHANCE := 0.01
 const SHINY_PITY := 150
@@ -49,7 +52,7 @@ static func roll_species(rng: RandomNumberGenerator) -> String:
 		r -= int(SPECIES[k]["weight"])
 		if r <= 0:
 			return k
-	return "istavrit"
+	return FALLBACK
 
 
 ## Boy çarpanı 0.7..1.5; büyükler daha nadir.

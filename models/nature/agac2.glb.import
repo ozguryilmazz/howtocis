@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://b0jnr86wqir0"
-path="res://.godot/imported/anglerfish.glb-dc566f5e5b6a4a2a4e9f732c98bcd344.scn"
+uid="uid://cs0m8b0glfnvi"
+path="res://.godot/imported/agac2.glb-cf4610c612f987063699743d98847bc0.scn"
 
 [deps]
 
-source_file="res://models/anglerfish.glb"
-dest_files=["res://.godot/imported/anglerfish.glb-dc566f5e5b6a4a2a4e9f732c98bcd344.scn"]
+source_file="res://models/nature/agac2.glb"
+dest_files=["res://.godot/imported/agac2.glb-cf4610c612f987063699743d98847bc0.scn"]
 
 [params]
 

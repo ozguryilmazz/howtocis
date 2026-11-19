@@ -17,7 +17,7 @@ const C := preload("res://scripts/creatures.gd")
 
 const WATER_Y := -0.3
 
-var species := "istavrit"
+var species := "palyaco"
 var info: Dictionary = {}
 var size_mult := 1.0
 var shiny := false
@@ -107,9 +107,9 @@ func _build() -> void:
 		add_child(glow)
 	var L := length
 
-	if info["shape"] == "model":
+	if info.has("model") and ResourceLoader.exists(str(info["model"])):
 		_build_model(L)
-	elif info["shape"] == "squid":
+	elif info.get("shape", "fish") == "squid":
 		var mantle := CylinderMesh.new()
 		mantle.top_radius = 0.0
 		mantle.bottom_radius = L * 0.22
@@ -134,7 +134,7 @@ func _build() -> void:
 			e.rings = 3
 			_part(e, Color("1B1B1B"), Vector3(s * L * 0.17, L * 0.05, L * 0.2))
 	else:
-		var tall := 0.75 if info["shape"] == "round" else 0.5
+		var tall := 0.75 if info.get("shape", "fish") == "round" else 0.5
 		var b := SphereMesh.new()
 		b.radius = 0.5
 		b.height = 1.0
@@ -197,14 +197,15 @@ func _build_model(L: float) -> void:
 		for mi in _model_meshes:
 			mi.material_overlay = gold
 	_anim = m.find_child("AnimationPlayer", true, false)
-	if _anim and _anim.has_animation(str(info.get("anim_flop", ""))):
-		_anim.get_animation(str(info["anim_flop"])).loop_mode = Animation.LOOP_LINEAR
-		_anim.play(str(info["anim_flop"]))
+	if _anim and _anim.has_animation(C.ANIM_FLOP):
+		_anim.get_animation(C.ANIM_FLOP).loop_mode = Animation.LOOP_LINEAR
+		_anim.play(C.ANIM_FLOP)
+		_anim.seek(randf() * 0.5)
 
 
 func _play_death() -> void:
-	if _anim and _anim.has_animation(str(info.get("anim_die", ""))):
-		_anim.play(str(info["anim_die"]))
+	if _anim and _anim.has_animation(C.ANIM_DIE):
+		_anim.play(C.ANIM_DIE)
 
 
 func _flash_model(on: bool) -> void:
@@ -328,6 +329,10 @@ func hit(drift: Vector3, damage: int) -> bool:
 	if info.get("ink", false) and not _inked:
 		_inked = true
 		inked.emit()
+	if info.get("puffs", false) and hits == 1:
+		# Balon balığı ilk vuruşta şişer
+		var tw := create_tween()
+		tw.tween_property(_visual, "scale", Vector3.ONE * 1.45, 0.15).set_trans(Tween.TRANS_BACK)
 	velocity = Vector3(drift.x, 2.2, drift.z)
 	_airborne = true
 	if hp <= 0:

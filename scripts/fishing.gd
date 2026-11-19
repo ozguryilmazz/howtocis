@@ -93,7 +93,7 @@ func setup(p_world: Node, p_player: Node, p_touch: Node, p_hud: Node) -> void:
 			_update_gear()
 		"balik":
 			var tur := OS.get_environment("BALIK_TUR")
-			Game.data["bucket"] = [{"id": tur if tur != "" else "levrek", "size": 1.0, "value": 40}]
+			Game.data["bucket"] = [{"id": tur if tur != "" else "fener", "size": 1.0, "value": 40}]
 			_refresh_hand()
 
 
@@ -461,7 +461,7 @@ func _refresh_hand() -> void:
 		var e: Dictionary = b[0]
 		var id := str(e.get("id", ""))
 		if not C.SPECIES.has(id):
-			id = "istavrit"
+			id = C.FALLBACK
 		_held = FISH.new()
 		_held.setup(world, player, id, float(e.get("size", 1.0)), bool(e.get("shiny", false)))
 		_hold_slot.add_child(_held)
@@ -482,7 +482,10 @@ func _on_fish_escaped(reason: String) -> void:
 
 func _on_fish_attacked(damage: float) -> void:
 	player.take_damage(damage)
-	hud.popup("Isırdı!")
+	var t := "Isırdı!"
+	if _fish and is_instance_valid(_fish):
+		t = str(_fish.info.get("bite_text", t))
+	hud.popup(t)
 
 
 func _on_fish_inked() -> void:

@@ -174,9 +174,44 @@ func _house(pos: Vector3, w: float) -> void:
 	add_mesh(box(Vector3(w * 0.22, w * 0.22, 0.06)), DOOR, pos + Vector3(w * 0.28, w * 0.6, -w * 0.5 - 0.03))
 
 
-func _olive(pos: Vector3) -> void:
-	add_mesh(cyl(0.12, 0.2, 1.4, 5), DARK_WOOD, pos + Vector3(0, 0.7, 0), Vector3.ZERO, true)
-	add_mesh(ball(1.0), OLIVE, pos + Vector3(0, 1.8, 0))
+## glb modeli sahneye koyar. Model dosyası yoksa null döner.
+func add_model(path: String, pos: Vector3, scl: float, yaw_deg := 0.0) -> Node3D:
+	if not ResourceLoader.exists(path):
+		return null
+	var m: Node3D = (load(path) as PackedScene).instantiate()
+	m.position = pos
+	m.scale = Vector3.ONE * scl
+	m.rotation_degrees.y = yaw_deg
+	add_child(m)
+	return m
+
+
+## Ağaç: model (Quaternius) ve gövdesine basit çarpışma silindiri.
+func _olive(pos: Vector3, scl := 0.5, yaw := 0.0, kind := 1) -> void:
+	var m := add_model("res://models/nature/agac%d.glb" % kind, pos, scl, yaw)
+	if m == null:
+		add_mesh(cyl(0.12, 0.2, 1.4, 5), DARK_WOOD, pos + Vector3(0, 0.7, 0), Vector3.ZERO, true)
+		add_mesh(ball(1.0), OLIVE, pos + Vector3(0, 1.8, 0))
+		return
+	var body := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var c := CylinderShape3D.new()
+	c.radius = 0.35
+	c.height = 3.0
+	shape.shape = c
+	body.position = pos + Vector3(0, 1.5, 0)
+	body.add_child(shape)
+	add_child(body)
+
+
+## Kaya: model ve kendi şeklinden çarpışma.
+func _rock(pos: Vector3, scl: float, yaw: float) -> void:
+	var m := add_model("res://models/nature/kaya.glb", pos, scl, yaw)
+	if m == null:
+		add_mesh(ball(scl * 1.5, 5, 3), ROCK, pos, Vector3(0, yaw, 10), true)
+		return
+	for mi in m.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).create_convex_collision(true, true)
 
 
 func _build_town() -> void:
@@ -191,7 +226,10 @@ func _build_town() -> void:
 	]:
 		_house(h[0], h[1])
 	for p in [Vector3(-15, 0.1, 6), Vector3(14, 0.1, 8), Vector3(-17, 0.1, 18), Vector3(17, 0.1, 19), Vector3(12, 0.1, -2)]:
-		_olive(p)
+		_olive(p, randf_range(0.42, 0.58), randf() * 360.0, 1 + (int(abs(p.x)) % 2))
+	# Tepede birkaç ağaç daha
+	for p in [Vector3(-6, 4.2, 29), Vector3(6, 4.6, 30), Vector3(-12, 1.6, 22), Vector3(13, 1.4, 22)]:
+		_olive(p, randf_range(0.4, 0.5), randf() * 360.0, 1 + (int(abs(p.z)) % 2))
 
 	# Kahvehane: tenteli masa ve tabureler
 	var kh := Vector3(-9, 0.1, 2)
@@ -231,8 +269,9 @@ func _build_town() -> void:
 	add_mesh(box(Vector3(1.64, 0.16, 4.04)), DOOR, Vector3(2.2, 0.12, -26), Vector3(0, 8, 0))
 
 	# Kıyı kayaları
-	for r in [[Vector3(-20, 0.2, -12), 1.8], [Vector3(18, 0.1, -10), 1.4], [Vector3(-24, 0.0, 0), 2.2]]:
-		add_mesh(ball(r[1], 5, 3), ROCK, r[0], Vector3(0, 30, 10), true)
+	for r in [[Vector3(-20, -0.4, -12), 1.2, 30.0], [Vector3(18, -0.4, -10), 0.9, 110.0], [Vector3(-24, -0.5, 0), 1.5, 200.0],
+			[Vector3(-7, -0.6, -19), 0.6, 60.0], [Vector3(6, -0.6, -18), 0.7, 300.0], [Vector3(22, -0.3, 4), 1.1, 15.0]]:
+		_rock(r[0], r[1], r[2])
 
 
 func _build_distance() -> void:
