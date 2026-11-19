@@ -30,8 +30,93 @@ func _ready() -> void:
 
 
 func _defaults() -> Dictionary:
-	return {"save_version": 2, "money": 0, "difficulty": "", "updated_at": 0,
-		"bucket": [], "caught": 0, "since_shiny": 0, "best_show": 1.0}
+	return {"save_version": 3, "money": 0, "difficulty": "", "updated_at": 0,
+		"bucket": [], "caught": 0, "since_shiny": 0, "best_show": 1.0,
+		"rods": ["baslangic"], "rod": "baslangic", "worms": 0, "knife": false}
+
+
+# --- Eşyalar: kamışlar, solucan, bıçak --------------------------------------
+
+signal items_changed
+
+const ITEMS := preload("res://scripts/items.gd")
+
+
+func rod() -> String:
+	var r := str(data.get("rod", "baslangic"))
+	return r if ITEMS.RODS.has(r) else "baslangic"
+
+
+func rod_tier() -> int:
+	return int(ITEMS.RODS[rod()]["tier"])
+
+
+func owns_rod(id: String) -> bool:
+	return id == "baslangic" or id in (data.get("rods", []) as Array)
+
+
+func worms() -> int:
+	return int(data.get("worms", 0))
+
+
+func has_knife() -> bool:
+	return bool(data.get("knife", false))
+
+
+func weapon() -> Dictionary:
+	return ITEMS.KNIFE if has_knife() else ITEMS.FISTS
+
+
+## Bir solucan harcar; yoksa false.
+func use_worm() -> bool:
+	if worms() <= 0:
+		return false
+	data["worms"] = worms() - 1
+	items_changed.emit()
+	save()
+	return true
+
+
+## Satın alma. id: "rod:altin", "worms", "knife". Başarılıysa true.
+func buy(id: String) -> bool:
+	var price := 0
+	if id.begins_with("rod:"):
+		var r := id.trim_prefix("rod:")
+		if not ITEMS.RODS.has(r) or owns_rod(r):
+			return false
+		price = int(ITEMS.RODS[r]["price"])
+	elif id == "worms":
+		price = ITEMS.WORM_PRICE * ITEMS.WORM_PACK
+	elif id == "knife":
+		if has_knife():
+			return false
+		price = int(ITEMS.KNIFE["price"])
+	else:
+		return false
+	if money() < price:
+		return false
+	data["money"] = money() - price
+	if id.begins_with("rod:"):
+		var r2 := id.trim_prefix("rod:")
+		var owned: Array = data.get("rods", ["baslangic"])
+		owned.append(r2)
+		data["rods"] = owned
+		data["rod"] = r2  # yeni kamış hemen kullanılır
+	elif id == "worms":
+		data["worms"] = worms() + ITEMS.WORM_PACK
+	elif id == "knife":
+		data["knife"] = true
+	money_changed.emit(money())
+	items_changed.emit()
+	save()
+	return true
+
+
+func set_rod(id: String) -> void:
+	if owns_rod(id):
+		data["rod"] = id
+		items_changed.emit()
+		save()
 
 
 # --- Kova: tutulan balıklar satılana kadar burada durur ----------------
@@ -152,6 +237,7 @@ func _on_signed_in() -> void:
 			f.store_string(JSON.stringify(data))
 		money_changed.emit(money())
 		bucket_changed.emit()
+		items_changed.emit()
 		data_loaded.emit()
 	elif int(cloud.get("updated_at", 0)) < int(data.get("updated_at", 0)):
 		Firebase.save(data)

@@ -9,6 +9,7 @@ var _msg: Label
 var _prompt: Label
 var _pop: Label
 var _bucket: Label
+var _gear: Label
 var _card: PanelContainer
 var _card_text: VBoxContainer
 var _ink: ColorRect
@@ -38,8 +39,8 @@ func _ready() -> void:
 	_msg = _label(30, BROWN)
 	_msg.anchor_left = 0.0
 	_msg.anchor_right = 1.0
-	_msg.offset_top = 150
-	_msg.offset_bottom = 200
+	_msg.offset_top = 205
+	_msg.offset_bottom = 255
 	add_child(_msg)
 
 	_prompt = _label(84, TERRA)
@@ -65,6 +66,10 @@ func _ready() -> void:
 	_bucket.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_bucket.position = Vector2(20, 96)
 	add_child(_bucket)
+	_gear = _label(19, Color("6B4A2A"))
+	_gear.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_gear.position = Vector2(20, 156)
+	add_child(_gear)
 
 	_card = PanelContainer.new()
 	var sb := StyleBoxFlat.new()
@@ -78,7 +83,7 @@ func _ready() -> void:
 	sb.content_margin_bottom = 14
 	_card.add_theme_stylebox_override("panel", sb)
 	# Kart sol kenarda durur: ortadaki el ve balığı kapatmaz.
-	_card.position = Vector2(20, 170)
+	_card.position = Vector2(20, 196)
 	_card.grow_horizontal = Control.GROW_DIRECTION_END
 	_card.grow_vertical = Control.GROW_DIRECTION_END
 	_card.mouse_filter = MOUSE_FILTER_IGNORE
@@ -118,6 +123,10 @@ func popup(text: String) -> void:
 
 func set_bucket(text: String) -> void:
 	_bucket.text = text
+
+
+func set_gear(text: String) -> void:
+	_gear.text = text
 
 
 func set_hp(hp: float) -> void:

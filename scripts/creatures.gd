@@ -5,20 +5,22 @@ extends RefCounted
 
 ## Her tür kendi 3B modelini (glb, Quaternius, CC0) ve animasyonlarını kullanır.
 ## model_len: modelin ölçeksiz boyu (m); oyundaki balık boyuna göre ölçeklenir.
-## body / fin: model yüklenemezse kullanılan yedek renkler.
-## bites: yerdeyken yakındaki oyuncuya zarar verir. puffs: ilk vuruşta şişer.
+## tier: gereken kamış seviyesi (1 başlangıç, 2 altın). worm: solucan gerekir.
+## hp: kaç yumruk (bıçak 2 vurur). bites: yerdeyken zarar verir. puffs: ilk vuruşta şişer.
 const SPECIES := {
-	"palyaco": {"name": "Palyaço Balığı", "base": 9, "hp": 1, "pull": 0.25, "weight": 30, "cm": 15,
-		"model": "res://models/fish/palyaco.glb", "model_len": 5.27, "body": "F28C28", "fin": "FFFFFF"},
-	"japon": {"name": "Mavi Japon Balığı", "base": 13, "hp": 2, "pull": 0.35, "weight": 26, "cm": 20,
-		"model": "res://models/fish/japon.glb", "model_len": 5.64, "body": "3C7DD9", "fin": "9CC3F0"},
-	"balon": {"name": "Balon Balığı", "base": 22, "hp": 2, "pull": 0.45, "weight": 18, "cm": 30,
-		"model": "res://models/fish/balon.glb", "model_len": 4.02, "body": "D9C27A", "fin": "8A7A4A",
+	"palyaco": {"name": "Palyaço Balığı", "base": 9, "hp": 2, "pull": 0.25, "weight": 30, "cm": 15,
+		"tier": 1, "model": "res://models/fish/palyaco.glb", "model_len": 5.27, "body": "F28C28", "fin": "FFFFFF"},
+	"japon": {"name": "Mavi Japon Balığı", "base": 13, "hp": 3, "pull": 0.35, "weight": 26, "cm": 20,
+		"tier": 1, "model": "res://models/fish/japon.glb", "model_len": 5.64, "body": "3C7DD9", "fin": "9CC3F0"},
+	"mercan": {"name": "Mercan Balığı", "base": 20, "hp": 3, "pull": 0.4, "weight": 16, "cm": 25,
+		"tier": 1, "worm": true, "model": "res://models/fish/mercan.glb", "model_len": 4.74, "body": "B03A2E", "fin": "F2E6D8"},
+	"balon": {"name": "Balon Balığı", "base": 24, "hp": 4, "pull": 0.45, "weight": 14, "cm": 30,
+		"tier": 1, "worm": true, "model": "res://models/fish/balon.glb", "model_len": 4.02, "body": "D9C27A", "fin": "8A7A4A",
 		"puffs": true},
-	"fener": {"name": "Fener Balığı", "base": 30, "hp": 3, "pull": 0.5, "weight": 14, "cm": 45,
-		"model": "res://models/fish/fener.glb", "model_len": 5.53, "body": "5A2A1E", "fin": "A8A27A"},
-	"aslan": {"name": "Aslan Balığı", "base": 48, "hp": 3, "pull": 0.65, "weight": 7, "cm": 35,
-		"model": "res://models/fish/aslan.glb", "model_len": 6.35, "body": "C0392B", "fin": "F5E6D3",
+	"fener": {"name": "Fener Balığı", "base": 34, "hp": 5, "pull": 0.5, "weight": 14, "cm": 45,
+		"tier": 2, "model": "res://models/fish/fener.glb", "model_len": 5.53, "body": "5A2A1E", "fin": "A8A27A"},
+	"aslan": {"name": "Aslan Balığı", "base": 55, "hp": 6, "pull": 0.65, "weight": 7, "cm": 35,
+		"tier": 2, "worm": true, "model": "res://models/fish/aslan.glb", "model_len": 6.35, "body": "C0392B", "fin": "F5E6D3",
 		"bites": true, "bite_text": "Dikeni battı!"},
 }
 
@@ -43,12 +45,14 @@ const BONUS := {
 }
 
 
-static func roll_species(rng: RandomNumberGenerator) -> String:
+## pool: seçilebilecek türler (boşsa hepsi). Ağırlığa göre rastgele seçer.
+static func roll_species(rng: RandomNumberGenerator, pool: Array = []) -> String:
+	var keys: Array = pool if not pool.is_empty() else SPECIES.keys()
 	var total := 0
-	for k in SPECIES:
+	for k in keys:
 		total += int(SPECIES[k]["weight"])
 	var r := rng.randi_range(1, total)
-	for k in SPECIES:
+	for k in keys:
 		r -= int(SPECIES[k]["weight"])
 		if r <= 0:
 			return k

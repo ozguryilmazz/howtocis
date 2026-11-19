@@ -5,12 +5,16 @@ extends Node3D
 ##     (5 saniye içinde bırakmazsa balık kendiliğinden düşer)
 ##   → balık yerde zıplaya zıplaya kaçışır; yumrukla vura vura öldürülür
 ##   → Al ile ele alınır, Balıkçı Teyze'ye götürülüp satılır.
-## Silahlar 3. aşamada dükkândan alınacak; o zamana kadar yumruk.
+## Kamış hangi balıkların geleceğini, solucan pahalı balıkları, bıçak vuruş gücünü belirler
+## (bkz. items.gd). Olta modeli sararken ve balık asılıyken bükülür.
 
 const C := preload("res://scripts/creatures.gd")
 const FISH := preload("res://scripts/fish.gd")
 const FLAT := preload("res://shaders/flat.gdshader")
 const HANDS := preload("res://scripts/hands.gd")
+const ITEMS := preload("res://scripts/items.gd")
+const ROD_BEND := preload("res://shaders/rod_bend.gdshader")
+const ROD_LEN := 1.15
 
 const CAST_DIST := 9.0
 const LIFT_DIST := 1.8
@@ -20,8 +24,6 @@ const FIST_R := Vector3(0.19, -0.21, -0.44)
 const FIST_L := Vector3(-0.19, -0.23, -0.46)
 const WATER_Y := -0.25
 
-## Yumruk. Silahlar da aynı alanlarla tanımlanacak (hasar, menzil, bekleme, itme).
-const FISTS := {"name": "Yumruk", "damage": 1, "reach": 3.0, "cooldown": 0.32, "push": 0.8}
 
 enum S { IDLE, CASTING, WAITING, BITE, REELING, HANGING, FIGHT, PICKUP }
 
@@ -31,7 +33,7 @@ var touch: Node
 var hud: Node
 
 var state := S.IDLE
-var weapon: Dictionary = FISTS
+var weapon: Dictionary = ITEMS.FISTS
 var rng := RandomNumberGenerator.new()
 
 var _diff: Dictionary
@@ -60,6 +62,14 @@ var _fist_l: Node3D
 var _punch_left := false
 var _hold: Node3D
 var _rod_hands: Array = []
+var _rod_id := ""
+var _rod_mesh: MeshInstance3D = null
+var _rod_mats: Array = []
+var _rod_ab := AABB()
+var _rod_dir := Vector2(0, 1)
+var _bend := 0.0
+var _knife: Node3D = null
+var _used_worm := false
 var _hold_slot: Node3D
 var _bobber: MeshInstance3D
 var _line: MeshInstance3D
@@ -83,6 +93,8 @@ func setup(p_world: Node, p_player: Node, p_touch: Node, p_hud: Node) -> void:
 	_build_gear()
 	player.fainted.connect(_on_fainted)
 	Game.bucket_changed.connect(_refresh_hand)
+	Game.items_changed.connect(_on_items_changed)
+	_on_items_changed()
 	_set_idle()
 	_refresh_hand()
 	hud.message("İskelenin ucuna yürü, denize dön ve At'a bas.", 6.0)
@@ -106,27 +118,132 @@ func _flat(color: Color) -> ShaderMaterial:
 	return m
 
 
-func _build_gear() -> void:
-	var cam: Camera3D = player.camera
+func _on_items_changed() -> void:
+	weapon = Game.weapon()
+	if Game.rod() != _rod_id:
+		_build_rod()
+	if _knife:
+		_knife.visible = Game.has_knife()
+	if state == S.IDLE:
+		_update_gear()
 
-	# Olta iki elle tutulur: sağ el sapın dibinde, sol el makaranın üstünde.
-	var built: Array = HANDS.rod(1.05)
-	_rod = built[0]
-	_rod_tip = built[1]
+
+## Kamış modelini yükler (Quaternius), malzemelerini bükülme shader'ına çevirir,
+## iki eli sapa ve makaraya yerleştirir. Model yoksa basit kutu oltaya düşer.
+func _build_rod() -> void:
+	var cam: Camera3D = player.camera
+	var old_tip := _rod_tip
+	if _rod:
+		_rod.queue_free()
+	for h in _rod_hands:
+		h.queue_free()
+	_rod_hands.clear()
+	_rod_mats.clear()
+	_rod_mesh = null
+	_rod_id = Game.rod()
+	var info: Dictionary = ITEMS.RODS[_rod_id]
+
+	_rod = Node3D.new()
 	_rod.position = Vector3(0.2, -0.36, -0.5)
 	_rod.rotation_degrees = Vector3(-50, 10, -4)
 	cam.add_child(_rod)
+	_rod_tip = Node3D.new()
+	_rod.add_child(_rod_tip)
+	var reel_pos := Vector3(-0.06, 0.2, 0.0)
+
+	if ResourceLoader.exists(str(info["model"])):
+		var m: Node3D = (load(str(info["model"])) as PackedScene).instantiate()
+		_rod.add_child(m)
+		var mis: Array = m.find_children("*", "MeshInstance3D", true, false)
+		_rod_mesh = mis[0]
+		_rod_ab = _rod_mesh.get_aabb()
+		var c := _rod_ab.get_center()
+		var to_model: Transform3D = _rod_mesh.transform
+		var base: Vector3 = to_model * Vector3(c.x, c.y, _rod_ab.position.z)
+		var tip: Vector3 = to_model * Vector3(c.x, c.y, _rod_ab.end.z)
+		var sc := ROD_LEN / (tip - base).length()
+		# Makara (kalınlığın en fazla olduğu yer) sol yana gelsin diye model döndürülür.
+		m.rotation.y = deg_to_rad(float(OS.get_environment("BALIK_ROD_YAW")) if OS.has_environment("BALIK_ROD_YAW") else float(info.get("yaw", 90.0)))
+		m.scale = Vector3.ONE * sc
+		m.position = -(m.basis * base)
+		# Bükülme yönü: oltanın önüne (-Z) doğru; model uzayına çevrilir.
+		var to_mesh: Basis = (m.transform * _rod_mesh.transform).basis.inverse()
+		var d: Vector3 = (to_mesh * Vector3(0, 0, -1))
+		_rod_dir = Vector2(d.x, d.y).normalized()
+		for si in _rod_mesh.mesh.get_surface_count():
+			var src := _rod_mesh.get_active_material(si)
+			var col := Color(0.4, 0.3, 0.2)
+			if src is BaseMaterial3D:
+				col = (src as BaseMaterial3D).albedo_color
+			var sm := ShaderMaterial.new()
+			sm.shader = ROD_BEND
+			sm.set_shader_parameter("albedo", col)
+			sm.set_shader_parameter("z0", _rod_ab.position.z)
+			sm.set_shader_parameter("len", _rod_ab.size.z)
+			sm.set_shader_parameter("dir", _rod_dir)
+			_rod_mesh.set_surface_override_material(si, sm)
+			_rod_mats.append(sm)
+		_rod_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		reel_pos = Vector3(-0.09, float(info.get("reel_y", 0.2)), 0.0)
+		_set_bend(0.0)
+	else:
+		var built: Array = HANDS.rod(ROD_LEN)
+		_rod.add_child(built[0])
+		_rod_tip.position = (built[1] as Node3D).position
+		reel_pos = (built[2] as Node3D).position
+
 	# Eller kameraya bağlıdır: kol ekranın altından gelir, yumruk oltayı kavrar.
 	var axis: Vector3 = _rod.transform.basis.y
 	var rh := HANDS.fist(false, 0.3)
-	_grip(rh, _rod.transform * Vector3(0, 0.12, 0), Vector3(0.35, -0.75, 0.55), axis)
+	_grip(rh, _rod.transform * Vector3(0, 0.07, 0), Vector3(0.35, -0.75, 0.55), axis)
 	cam.add_child(rh)
 	# Sol el makaranın kolunu tutar (makara oltanın sol yanında).
-	var knob: Node3D = built[2]
 	var lh := HANDS.fist(true, 0.3)
-	_grip(lh, _rod.transform * knob.position + Vector3(-0.06, -0.025, 0.02), Vector3(-0.4, -0.75, 0.5), _rod.transform.basis.x)
+	_grip(lh, _rod.transform * reel_pos + Vector3(-0.02, -0.02, 0.02), Vector3(-0.4, -0.75, 0.5), _rod.transform.basis.x)
 	cam.add_child(lh)
 	_rod_hands = [rh, lh]
+	if old_tip and is_instance_valid(old_tip):
+		old_tip.queue_free()
+	_update_gear()
+
+
+## Bükülmeyi uygular ve misinanın bağlı olduğu ucu bükük uca taşır.
+func _set_bend(v: float) -> void:
+	_bend = v
+	if _rod_mesh == null:
+		return
+	for m in _rod_mats:
+		m.set_shader_parameter("bend", v)
+	var c := _rod_ab.get_center()
+	var L := _rod_ab.size.z
+	var p := Vector3(c.x, c.y, _rod_ab.end.z)
+	p.x += _rod_dir.x * v * L * 0.55
+	p.y += _rod_dir.y * v * L * 0.55
+	p.z -= v * v * L * 0.18
+	_rod_tip.position = _rod.to_local(_rod_mesh.global_transform * p)
+
+
+func _bend_target() -> float:
+	var t := Time.get_ticks_msec() * 0.001
+	match state:
+		S.CASTING:
+			return 0.12
+		S.WAITING:
+			return 0.03 + 0.02 * sin(t * 3.0)
+		S.BITE:
+			return 0.35 + 0.12 * sin(t * 30.0)
+		S.REELING:
+			return 0.12 + _tension * 0.7 + 0.05 * sin(t * 13.0)
+		S.HANGING:
+			var mass := 0.2
+			if _fish and is_instance_valid(_fish):
+				mass = clampf(_fish.length * 0.5, 0.15, 0.5)
+			return mass + 0.07 * sin(t * 15.0)
+	return 0.0
+
+
+func _build_gear() -> void:
+	var cam: Camera3D = player.camera
 
 	# Dövüş: iki yumruk
 	_fists = Node3D.new()
@@ -140,6 +257,14 @@ func _build_gear() -> void:
 	_fist_l.rotation_degrees = Vector3(18, -10, 8)
 	_fists.add_child(_fist_l)
 	_fists.visible = false
+	# Bıçak: satın alınınca sağ elde durur, sapı yumruğun içinden geçer.
+	if ResourceLoader.exists(str(ITEMS.KNIFE["model"])):
+		_knife = (load(str(ITEMS.KNIFE["model"])) as PackedScene).instantiate()
+		_knife.scale = Vector3.ONE * 0.17
+		_knife.rotation_degrees = Vector3(-90, 0, 0)
+		_knife.position = Vector3(0.0, 0.0, -0.01)
+		_fist.add_child(_knife)
+		_knife.visible = Game.has_knife()
 
 	# Eldeki balık: yumruk balığı ağzından tutar, balık aşağı sarkar.
 	_hold = Node3D.new()
@@ -272,7 +397,8 @@ func _start_wait() -> void:
 
 func _start_bite() -> void:
 	state = S.BITE
-	_species = C.roll_species(rng)
+	var pool := ITEMS.catchable(Game.rod_tier(), Game.worms() > 0)
+	_species = C.roll_species(rng, pool)
 	# Geliştirme: BALIK_TUR ile hep aynı tür gelir (test için).
 	if C.SPECIES.has(OS.get_environment("BALIK_TUR")):
 		_species = OS.get_environment("BALIK_TUR")
@@ -283,6 +409,12 @@ func _start_bite() -> void:
 
 
 func _start_reel() -> void:
+	# Solucan isteyen balık oltaya takılınca bir solucan harcanır.
+	_used_worm = false
+	if C.SPECIES[_species].get("worm", false):
+		_used_worm = Game.use_worm()
+		if _used_worm:
+			hud.popup("Solucanı kaptı!")
 	state = S.REELING
 	player.locked = true
 	_tension = 0.45
@@ -507,6 +639,11 @@ func _physics_process(delta: float) -> void:
 		tap = a[0]
 		held = a[1]
 	_cooldown -= delta
+	if _rod_mesh:
+		var bt := _bend_target()
+		if OS.has_environment("BALIK_BUK"):
+			bt = float(OS.get_environment("BALIK_BUK"))  # test: sabit bükülme
+		_set_bend(lerpf(_bend, bt, 1.0 - exp(-10.0 * delta)))
 	if _punch_t > 0.0:
 		_punch_t -= delta
 		var k := sin(clampf(1.0 - _punch_t / 0.18, 0.0, 1.0) * PI)
@@ -572,6 +709,7 @@ func _bob(_delta: float, amp: float) -> void:
 
 func _reel(delta: float, held: bool) -> void:
 	var pull := float(C.SPECIES[_species]["pull"])
+	var reel_mult := float(ITEMS.RODS[Game.rod()].get("reel", 1.0))
 	if held:
 		_tension += (0.42 + 0.25 * pull) * delta
 	else:
@@ -585,7 +723,7 @@ func _reel(delta: float, held: bool) -> void:
 
 	var in_zone := _tension >= _zone.x and _tension <= _zone.y
 	if held and _tension >= _zone.x:
-		_dist -= (2.2 if in_zone else 0.8) * delta
+		_dist -= (2.2 if in_zone else 0.8) * reel_mult * delta
 	if _tension >= 1.0:
 		_fail("Misina koptu! Bu kadar sıkı çekme.")
 		return
@@ -655,16 +793,16 @@ func _autopilot(delta: float) -> Array:
 		S.IDLE:
 			if Game.bucket_full():
 				if _auto_path.is_empty():
-					_auto_path = [Vector3(-2, 0, -12), Vector3(4, 0, -6)]
+					_auto_path = [Vector3(-2, 0, -11), Vector3(4, 0, -6)]
 					_log("satmaya gidiyor")
 				if _auto_follow(_auto_path):
 					var n := Game.bucket().size()
 					world.call("_on_sell")
 					_log("sattı %d balık, para=%d" % [n, Game.money()])
 				return [false, false]
-			if player.global_position.z > -29.0:
+			if player.global_position.z > -31.0:
 				if _auto_path.is_empty():
-					_auto_path = [Vector3(-2, 0, -12), Vector3(-2, 0, -31)]
+					_auto_path = [Vector3(-2, 0, -11), Vector3(-2, 0, -33)]
 				_auto_follow(_auto_path)
 				return [false, false]
 			_auto_path.clear()

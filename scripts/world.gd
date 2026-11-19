@@ -9,6 +9,7 @@ const TOUCH := preload("res://scripts/touch_controls.gd")
 const FISHING := preload("res://scripts/fishing.gd")
 const FISHING_HUD := preload("res://scripts/fishing_hud.gd")
 const C := preload("res://scripts/creatures.gd")
+const SHOP := preload("res://scripts/shop.gd")
 
 const SKY := Color("F7E3C6")
 const SAND := Color("D8C49A")
@@ -23,13 +24,16 @@ const ROCK := Color("B4B2A9")
 
 const STALL := Vector3(5, 0.1, -4)
 const SELL_RANGE := 4.0
-const PIER_MIN := Vector2(-3.5, -33.0)
-const PIER_MAX := Vector2(-0.5, -15.0)
-const PIER_TOP := 0.475
-## Kumsaldan iskeleye çıkan rampa (z: -15 → -11.5)
-const RAMP_Z := Vector2(-15.0, -11.5)
-const BEACH_CENTER := Vector2(0, 12)
-const BEACH_RADIUS := 30.0
+const MARKET := Vector3(11.5, 0.1, -5.5)
+const MARKET_RANGE := 4.6
+## İskele: Quaternius "Dock Wide" parçaları. Güverte üstü PIER_TOP, kıyıdan denize z: -15 → -35.8
+const PIER_TOP := 1.0
+const PIER_X := -2.0
+const PIER_START := -15.0
+const DOCK_SCALE := 0.24
+const DOCK_DECK := 3.68     # modelde güverte üstü (ölçeksiz)
+const STAIRS_TOP := 4.75    # merdiven modelinde en üst basamak (ölçeksiz)
+const PIER_END := -35.8
 
 var player: CharacterBody3D
 var fishing: Node3D
@@ -37,32 +41,49 @@ var hud: Control
 var _mats := {}
 var _money_label: Label
 var _sell: Button
+var _market_btn: Button
+var _shop: Control = null
+var _touch: Control
+var _hud_layer: CanvasLayer
 
 
 func _ready() -> void:
+	# Geliştirme: BALIK_ZENGIN ile her şey satın alınmış başlanır (test için).
+	if OS.has_environment("BALIK_ZENGIN"):
+		Game.data["money"] = 5000
+		Game.buy("rod:altin")
+		Game.buy("knife")
+		Game.buy("worms")
+		Game.buy("worms")
 	_build_environment()
 	_build_sea()
 	_build_town()
 	_build_distance()
 	_spawn_player()
 	_build_hud()
+	# Geliştirme: BALIK_MARKET ile marketin önünde ve panel açık başlanır (ekran görüntüsü için).
+	if OS.has_environment("BALIK_MARKET"):
+		player.position = MARKET + Vector3(-2.5, 0.3, -3.2)
+		player.rotation.y = deg_to_rad(-140.0)
+		if OS.get_environment("BALIK_MARKET") == "panel":
+			_open_shop.call_deferred()
 
 
 # --- Zemin ---------------------------------------------------------------
 
-## Bir noktanın altındaki zeminin yüksekliği; altı denizse NAN.
+## Bir noktanın altındaki zeminin yüksekliği (çarpışma şekillerine ışın atılır); altı denizse NAN.
 func ground_height(p: Vector3) -> float:
-	if p.x >= PIER_MIN.x and p.x <= PIER_MAX.x and p.z >= PIER_MIN.y and p.z <= PIER_MAX.y:
-		return PIER_TOP
-	if p.x >= PIER_MIN.x and p.x <= PIER_MAX.x and p.z > RAMP_Z.x and p.z <= RAMP_Z.y:
-		return lerpf(PIER_TOP, 0.1, (p.z - RAMP_Z.x) / (RAMP_Z.y - RAMP_Z.x))
-	if Vector2(p.x, p.z).distance_to(BEACH_CENTER) <= BEACH_RADIUS:
-		return 0.1
-	return NAN
+	var q := PhysicsRayQueryParameters3D.create(Vector3(p.x, p.y + 1.5, p.z), Vector3(p.x, -3.0, p.z))
+	if player:
+		q.exclude = [player.get_rid()]
+	var hit := get_world_3d().direct_space_state.intersect_ray(q)
+	if hit.is_empty() or float(hit.position.y) < -0.2:
+		return NAN
+	return float(hit.position.y)
 
 
 func is_water(p: Vector3) -> bool:
-	return is_nan(ground_height(p))
+	return is_nan(ground_height(Vector3(p.x, 40.0, p.z)))
 
 
 # --- Yardımcılar ---------------------------------------------------------
@@ -204,6 +225,26 @@ func _olive(pos: Vector3, scl := 0.5, yaw := 0.0, kind := 1) -> void:
 	add_child(body)
 
 
+## Ev kümesi: model ve kendi şeklinden çarpışma. kind 1: iki ev, 2: üç ev.
+func _house_model(pos: Vector3, kind: int, yaw: float) -> void:
+	var m := add_model("res://models/town/ev%d.glb" % kind, pos, 4.6, yaw)
+	if m == null:
+		_house(pos, 3.0)
+		return
+	for mi in m.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).create_trimesh_collision()
+
+
+## Çimen öbeği (modelde iki öbek yan yana, ~63 m kayık; ortalanır).
+func _grass(pos: Vector3, scl: float, yaw: float) -> void:
+	var m := add_model("res://models/nature/cimen.glb", pos, scl, yaw)
+	if m == null:
+		return
+	for c in m.get_children():
+		if c is Node3D:
+			(c as Node3D).position.x -= 63.6
+
+
 ## Kaya: model ve kendi şeklinden çarpışma.
 func _rock(pos: Vector3, scl: float, yaw: float) -> void:
 	var m := add_model("res://models/nature/kaya.glb", pos, scl, yaw)
@@ -219,13 +260,22 @@ func _build_town() -> void:
 	add_mesh(cyl(30, 31, 2, 18), SAND, Vector3(0, -0.9, 12), Vector3.ZERO, true)
 	# Tepe ve üstündeki evler
 	add_mesh(cyl(7, 20, 8, 12), HILL, Vector3(0, 4.0, 34), Vector3.ZERO, true)
+	# Evler: Quaternius ev kümeleri (2 ve 3 evli)
 	for h in [
-		[Vector3(-7, 0.1, 16), 3.0], [Vector3(-2, 0.1, 19), 3.4], [Vector3(4, 0.1, 17), 3.0],
-		[Vector3(9, 0.1, 15), 2.8], [Vector3(-12, 0.1, 13), 2.6], [Vector3(-3, 8.0, 34), 3.0],
-		[Vector3(3, 8.0, 32), 2.6], [Vector3(-9, 3.4, 27), 2.8], [Vector3(9, 3.0, 26), 2.8],
+		[Vector3(-8, 0.1, 16), 1, 180.0], [Vector3(1, 0.1, 18), 2, 180.0], [Vector3(10, 0.1, 15), 1, 200.0],
+		[Vector3(-15, 0.1, 11), 2, 160.0], [Vector3(0, 8.0, 34), 2, 180.0],
+		[Vector3(-9, 3.4, 27), 1, 170.0], [Vector3(9, 3.0, 26), 1, 190.0],
 	]:
-		_house(h[0], h[1])
-	for p in [Vector3(-15, 0.1, 6), Vector3(14, 0.1, 8), Vector3(-17, 0.1, 18), Vector3(17, 0.1, 19), Vector3(12, 0.1, -2)]:
+		_house_model(h[0], h[1], h[2])
+	# Çimen öbekleri
+	var grass_rng := RandomNumberGenerator.new()
+	grass_rng.seed = 7
+	for i in 46:
+		var gp := Vector3(grass_rng.randf_range(-24, 24), 0.1, grass_rng.randf_range(-6, 13))
+		if absf(gp.x - PIER_X) < 3.0 or gp.distance_to(STALL) < 3.0 or gp.distance_to(MARKET) < 3.5 or gp.distance_to(Vector3(-9, 0.1, 2)) < 4.0:
+			continue
+		_grass(gp, grass_rng.randf_range(1.2, 1.9), grass_rng.randf() * 360.0)
+	for p in [Vector3(-15, 0.1, 4), Vector3(15, 0.1, 6), Vector3(-19, 0.1, 18), Vector3(18, 0.1, 19), Vector3(16, 0.1, -1)]:
 		_olive(p, randf_range(0.42, 0.58), randf() * 360.0, 1 + (int(abs(p.x)) % 2))
 	# Tepede birkaç ağaç daha
 	for p in [Vector3(-6, 4.2, 29), Vector3(6, 4.6, 30), Vector3(-12, 1.6, 22), Vector3(13, 1.4, 22)]:
@@ -253,25 +303,75 @@ func _build_town() -> void:
 	sign_label("Balıkçı Teyze", st + Vector3(0, 3.1, 0))
 	sign_label("Balık alınır", st + Vector3(0, 1.4, -0.7), 40)
 
-	# İskele denize doğru uzanır
-	add_mesh(box(Vector3(3, 0.35, 18)), WOOD, Vector3(-2, 0.3, -24), Vector3.ZERO, true)
-	# Rampa: kumsaldan iskeleye yürüyerek çıkılsın diye
-	var ramp_len := RAMP_Z.y - RAMP_Z.x
-	var slope := atan2(PIER_TOP - 0.1, ramp_len)
-	add_mesh(box(Vector3(3, 0.2, ramp_len / cos(slope) + 0.1)), WOOD,
-		Vector3(-2, (PIER_TOP + 0.1) * 0.5 - 0.1, (RAMP_Z.x + RAMP_Z.y) * 0.5), Vector3(rad_to_deg(slope), 0, 0), true)
-	for z in range(-32, -15, 4):
-		for x in [-3.4, -0.6]:
-			add_mesh(cyl(0.14, 0.14, 2.2, 6), DARK_WOOD, Vector3(x, -0.6, z))
+	_build_pier()
 
 	# Kayık
 	add_mesh(box(Vector3(1.6, 0.7, 4.0)), WHITE, Vector3(2.2, -0.15, -26), Vector3(0, 8, 0))
 	add_mesh(box(Vector3(1.64, 0.16, 4.04)), DOOR, Vector3(2.2, 0.12, -26), Vector3(0, 8, 0))
 
+	_build_market()
+
 	# Kıyı kayaları
 	for r in [[Vector3(-20, -0.4, -12), 1.2, 30.0], [Vector3(18, -0.4, -10), 0.9, 110.0], [Vector3(-24, -0.5, 0), 1.5, 200.0],
 			[Vector3(-7, -0.6, -19), 0.6, 60.0], [Vector3(6, -0.6, -18), 0.7, 300.0], [Vector3(22, -0.3, 4), 1.1, 15.0]]:
 		_rock(r[0], r[1], r[2])
+
+
+## İskele: dört "Dock Wide" parçası, kıyıda merdiven. Güverte suyun 1 m üstünde.
+func _build_pier() -> void:
+	var seg_len := 21.69 * DOCK_SCALE
+	var y := PIER_TOP - DOCK_DECK * DOCK_SCALE
+	var z := PIER_START - seg_len * 0.5
+	var built := false
+	while z - seg_len * 0.5 > PIER_END - 0.5:
+		var m := add_model("res://models/town/iskele.glb", Vector3(PIER_X, y, z), DOCK_SCALE)
+		if m:
+			built = true
+			for mi in m.find_children("*", "MeshInstance3D", true, false):
+				(mi as MeshInstance3D).create_trimesh_collision()
+		# Modelin direkleri suya kadar inmez: altına kazıklar
+		for px in [-1.55, 1.55]:
+			add_mesh(cyl(0.12, 0.12, 2.2, 6), DARK_WOOD, Vector3(PIER_X + px, -0.9, z))
+		z -= seg_len
+	if not built:
+		add_mesh(box(Vector3(3, 0.35, absf(PIER_END - PIER_START))), WOOD,
+			Vector3(PIER_X, PIER_TOP - 0.175, (PIER_START + PIER_END) * 0.5), Vector3.ZERO, true)
+	# Merdiven: kumsaldan güverteye. Basamaklar görsel; yürümek için altında görünmez rampa var.
+	var sy := PIER_TOP - STAIRS_TOP * DOCK_SCALE
+	add_model("res://models/town/merdiven.glb", Vector3(PIER_X, sy, PIER_START + 4.66 * DOCK_SCALE), DOCK_SCALE)
+	var ramp_len := 3.0
+	var slope := atan2(PIER_TOP - 0.1, ramp_len)
+	var ramp := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var bx := BoxShape3D.new()
+	bx.size = Vector3(2.2, 0.1, ramp_len / cos(slope))
+	cs.shape = bx
+	ramp.add_child(cs)
+	ramp.position = Vector3(PIER_X, (PIER_TOP + 0.1) * 0.5 - 0.05, PIER_START + ramp_len * 0.5)
+	ramp.rotation.x = slope
+	add_child(ramp)
+
+
+## Market: Quaternius "Market Stand"; tezgâhta satılan eşyalar sergilenir.
+func _build_market() -> void:
+	var m := add_model("res://models/town/market.glb", MARKET, 2.6, -90.0)
+	if m == null:
+		add_mesh(box(Vector3(2.6, 1.0, 1.2)), WOOD, MARKET + Vector3(0, 0.5, 0), Vector3.ZERO, true)
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var bx := BoxShape3D.new()
+	bx.size = Vector3(3.0, 2.6, 1.4)
+	cs.shape = bx
+	body.add_child(cs)
+	body.position = MARKET + Vector3(0, 1.3, 0.2)
+	add_child(body)
+	# Sergi: altın kamış, bıçak, solucan
+	add_model("res://models/items/kamis_altin.glb", MARKET + Vector3(-1.0, -0.15, -0.45), 0.2, 0.0)
+	var k := add_model("res://models/items/bicak.glb", MARKET + Vector3(0.2, 1.05, -0.5), 0.18, 30.0)
+	if k:
+		k.rotation_degrees.z = 90.0
+	add_model("res://models/items/solucan.glb", MARKET + Vector3(0.8, 1.0, -0.5), 0.35, 200.0)
+	sign_label("Market", MARKET + Vector3(0, 3.3, 0))
 
 
 func _build_distance() -> void:
@@ -303,7 +403,7 @@ func _spawn_player() -> void:
 		player.rotation.y = PI
 	# Geliştirme: iskelenin ucundan başla.
 	if "--iskele" in args or "--otomatik" in args:
-		player.position = Vector3(-2, 0.6, -31)
+		player.position = Vector3(PIER_X, PIER_TOP + 0.3, PIER_END + 2.5)
 	add_child(player)
 
 
@@ -317,6 +417,7 @@ func _build_hud() -> void:
 	var touch := TOUCH.new()
 	layer.add_child(touch)
 	player.touch = touch
+	_touch = touch
 
 	fishing = FISHING.new()
 	add_child(fishing)
@@ -338,6 +439,23 @@ func _build_hud() -> void:
 	_sell.visible = false
 	_sell.pressed.connect(_on_sell)
 	layer.add_child(_sell)
+
+	_market_btn = Button.new()
+	_market_btn.text = "Market'e gir"
+	_market_btn.anchor_left = 0.5
+	_market_btn.anchor_right = 0.5
+	_market_btn.offset_left = -200
+	_market_btn.offset_right = 200
+	_market_btn.offset_top = 64
+	_market_btn.offset_bottom = 134
+	_market_btn.add_theme_font_size_override("font_size", 30)
+	preload("res://scripts/main_menu.gd").style_button(_market_btn)
+	_market_btn.visible = false
+	_market_btn.pressed.connect(_open_shop)
+	layer.add_child(_market_btn)
+	_hud_layer = layer
+	Game.items_changed.connect(_update_gear_label)
+	_update_gear_label()
 
 	_money_label = Label.new()
 	_money_label.position = Vector2(20, 16)
@@ -395,9 +513,35 @@ func _hand_text() -> String:
 
 func _process(_delta: float) -> void:
 	var near := player.global_position.distance_to(STALL) < SELL_RANGE and not Game.bucket().is_empty()
-	_sell.visible = near
+	_sell.visible = near and _shop == null
 	if near:
 		_sell.text = "Sat: " + _hand_text().trim_prefix("Elinde: ")
+	_market_btn.visible = _shop == null and player.global_position.distance_to(MARKET) < MARKET_RANGE
+
+
+func _update_gear_label() -> void:
+	var rod_name := str(preload("res://scripts/items.gd").RODS[Game.rod()]["name"])
+	hud.set_gear("%s  ·  Solucan: %d%s" % [rod_name, Game.worms(), "  ·  Bıçak" if Game.has_knife() else ""])
+
+
+func _open_shop() -> void:
+	if _shop:
+		return
+	_shop = SHOP.new()
+	_shop.closed.connect(_close_shop)
+	_hud_layer.add_child(_shop)
+	_touch.set_process_input(false)
+	_touch.visible = false
+	player.locked = true
+
+
+func _close_shop() -> void:
+	if _shop:
+		_shop.queue_free()
+	_shop = null
+	_touch.set_process_input(true)
+	_touch.visible = true
+	player.locked = false
 
 
 func _on_sell() -> void:

@@ -50,24 +50,52 @@ static func cyl(parent: Node3D, r_top: float, r_bot: float, h: float, seg: int, 
 	return part(parent, c, color, pos, rot)
 
 
-## Kapalı yumruk. left: sol el (başparmak diğer tarafta). arm: kolun uzunluğu.
+static func capsule(parent: Node3D, r: float, h: float, pos: Vector3, rot: Vector3, color := SKIN) -> MeshInstance3D:
+	var c := CapsuleMesh.new()
+	c.radius = r
+	c.height = maxf(h, r * 2.0)
+	c.radial_segments = 6
+	c.rings = 1
+	return part(parent, c, color, pos, rot)
+
+
+static func ball(parent: Node3D, r: float, pos: Vector3, scl := Vector3.ONE, color := SKIN) -> MeshInstance3D:
+	var b := SphereMesh.new()
+	b.radius = r
+	b.height = r * 2.0
+	b.radial_segments = 7
+	b.rings = 4
+	var mi := part(parent, b, color, pos)
+	mi.scale = scl
+	return mi
+
+
+## Kapalı yumruk. left: sol el (başparmak diğer tarafta). arm: önkolun uzunluğu.
+## Parmaklar üç boğumlu kapsüllerdir; avuç yuvarlatılmış, bilek incelir.
 static func fist(left := false, arm := 0.26) -> Node3D:
 	var h := Node3D.new()
 	var s := -1.0 if left else 1.0
-	# Avuç ve elin sırtı
-	box(h, Vector3(0.088, 0.072, 0.075), Vector3(0, 0, 0))
-	# Dört parmak: ön yüzde kıvrılmış iki boğum
+	# Avuç: kutu ve yuvarlak elin sırtı
+	box(h, Vector3(0.082, 0.062, 0.07), Vector3(0, 0, 0.002))
+	ball(h, 0.045, Vector3(0, 0.012, 0.004), Vector3(0.95, 0.55, 0.85))
+	# Dört parmak: üst boğum ileri, orta boğum aşağı, uç boğum geriye kıvrık
+	var lens := [0.036, 0.042, 0.04, 0.032]
 	for i in 4:
-		var x := -0.033 + i * 0.022
-		var len_f := 0.026 if i in [1, 2] else 0.022
-		box(h, Vector3(0.02, 0.03, len_f), Vector3(x, 0.018, -0.045 - len_f * 0.5 + 0.01))
-		box(h, Vector3(0.02, 0.034, 0.022), Vector3(x, -0.012, -0.05), Vector3(15, 0, 0), SKIN_DARK)
-	# Başparmak: parmakların üstüne kapanır
-	box(h, Vector3(0.026, 0.024, 0.05), Vector3(-0.045 * s, -0.022, -0.035), Vector3(0, 30 * s, -10 * s))
-	# Bilek, önkol ve kol yeni
-	box(h, Vector3(0.062, 0.058, arm), Vector3(0, -0.004, 0.035 + arm * 0.5))
-	box(h, Vector3(0.078, 0.074, 0.03), Vector3(0, -0.004, 0.05 + arm), Vector3.ZERO, CUFF)
-	box(h, Vector3(0.082, 0.078, 0.2), Vector3(0, -0.004, 0.16 + arm), Vector3.ZERO, SLEEVE)
+		var x := (-0.03 + i * 0.02) * s
+		var L: float = lens[i]
+		ball(h, 0.0115, Vector3(x, 0.024, -0.03), Vector3.ONE, SKIN_DARK)  # eklem
+		capsule(h, 0.0105, L, Vector3(x, 0.02, -0.03 - L * 0.4), Vector3(-80, 0, 0))
+		capsule(h, 0.0098, 0.034, Vector3(x, -0.004, -0.032 - L * 0.8), Vector3(10, 0, 0))
+		capsule(h, 0.009, 0.026, Vector3(x, -0.026, -0.046), Vector3(-70, 0, 0), SKIN_DARK)
+	# Başparmak: avucun yanından çıkıp parmakların önüne kapanır
+	ball(h, 0.02, Vector3(-0.038 * s, -0.012, -0.005), Vector3(0.9, 1.0, 1.3))
+	capsule(h, 0.0115, 0.04, Vector3(-0.034 * s, -0.024, -0.03), Vector3(-60, 0, 25 * s))
+	capsule(h, 0.0105, 0.034, Vector3(-0.014 * s, -0.034, -0.052), Vector3(0, 0, 80 * s))
+	# Bilek ve önkol (bileğe doğru incelir), manşet ve gömlek kolu
+	cyl(h, 0.03, 0.026, 0.05, 8, Vector3(0, -0.004, 0.055), Vector3(90, 0, 0), SKIN)
+	cyl(h, 0.039, 0.03, arm, 8, Vector3(0, -0.004, 0.08 + arm * 0.5), Vector3(90, 0, 0), SKIN)
+	cyl(h, 0.047, 0.047, 0.035, 8, Vector3(0, -0.004, 0.08 + arm), Vector3(90, 0, 0), CUFF)
+	cyl(h, 0.052, 0.046, 0.22, 8, Vector3(0, -0.004, 0.2 + arm), Vector3(90, 0, 0), SLEEVE)
 	return h
 
 
