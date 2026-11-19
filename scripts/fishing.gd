@@ -10,11 +10,14 @@ extends Node3D
 const C := preload("res://scripts/creatures.gd")
 const FISH := preload("res://scripts/fish.gd")
 const FLAT := preload("res://shaders/flat.gdshader")
+const HANDS := preload("res://scripts/hands.gd")
 
 const CAST_DIST := 9.0
 const LIFT_DIST := 1.8
 const HANG_TIME := 5.0
 const PICK_RANGE := 2.6
+const FIST_R := Vector3(0.19, -0.21, -0.44)
+const FIST_L := Vector3(-0.19, -0.23, -0.46)
 const WATER_Y := -0.25
 
 ## Yumruk. Silahlar da aynı alanlarla tanımlanacak (hasar, menzil, bekleme, itme).
@@ -51,7 +54,13 @@ var _punch_t := 0.0
 
 var _rod: Node3D
 var _rod_tip: Node3D
+var _fists: Node3D
 var _fist: Node3D
+var _fist_l: Node3D
+var _punch_left := false
+var _hold: Node3D
+var _rod_hands: Array = []
+var _hold_slot: Node3D
 var _bobber: MeshInstance3D
 var _line: MeshInstance3D
 var _line_mesh: ImmediateMesh
@@ -77,6 +86,15 @@ func setup(p_world: Node, p_player: Node, p_touch: Node, p_hud: Node) -> void:
 	_set_idle()
 	_refresh_hand()
 	hud.message("İskelenin ucuna yürü, denize dön ve At'a bas.", 6.0)
+	# Geliştirme: BALIK_POZ=yumruk|balik ile el görüntüleri test edilir (kayıt değişmez).
+	match OS.get_environment("BALIK_POZ"):
+		"yumruk":
+			state = S.FIGHT
+			_update_gear()
+		"balik":
+			var tur := OS.get_environment("BALIK_TUR")
+			Game.data["bucket"] = [{"id": tur if tur != "" else "levrek", "size": 1.0, "value": 40}]
+			_refresh_hand()
 
 
 # --- Görseller -----------------------------------------------------------
@@ -90,66 +108,48 @@ func _flat(color: Color) -> ShaderMaterial:
 
 func _build_gear() -> void:
 	var cam: Camera3D = player.camera
-	# Olta: kameranın sağ altında, ileri ve yukarı bakar.
-	_rod = Node3D.new()
-	_rod.position = Vector3(0.42, -0.42, -0.62)
-	_rod.rotation_degrees = Vector3(-55, 12, 0)
-	cam.add_child(_rod)
-	var stick := CylinderMesh.new()
-	stick.top_radius = 0.006
-	stick.bottom_radius = 0.016
-	stick.height = 0.95
-	stick.radial_segments = 5
-	stick.rings = 0
-	stick.material = _flat(Color("7A5A3A"))
-	var smi := MeshInstance3D.new()
-	smi.mesh = stick
-	smi.position.y = 0.475
-	smi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_rod.add_child(smi)
-	var reel := CylinderMesh.new()
-	reel.top_radius = 0.035
-	reel.bottom_radius = 0.035
-	reel.height = 0.03
-	reel.radial_segments = 8
-	reel.rings = 0
-	reel.material = _flat(Color("378ADD"))
-	var rmi := MeshInstance3D.new()
-	rmi.mesh = reel
-	rmi.position = Vector3(0.04, 0.12, 0)
-	rmi.rotation_degrees = Vector3(0, 0, 90)
-	_rod.add_child(rmi)
-	_rod_tip = Node3D.new()
-	_rod_tip.position.y = 0.95
-	_rod.add_child(_rod_tip)
 
-	# Yumruk: ten rengi el, parmak eklemleri ve kol.
-	_fist = Node3D.new()
-	_fist.position = Vector3(0.3, -0.3, -0.55)
-	_fist.scale = Vector3.ONE * 0.75
-	cam.add_child(_fist)
-	var skin := _flat(Color("E8B48A"))
-	var hand := BoxMesh.new()
-	hand.size = Vector3(0.12, 0.11, 0.13)
-	hand.material = skin
-	var hmi := MeshInstance3D.new()
-	hmi.mesh = hand
-	_fist.add_child(hmi)
-	var knuckles := BoxMesh.new()
-	knuckles.size = Vector3(0.12, 0.035, 0.03)
-	knuckles.material = _flat(Color("D39A72"))
-	var kmi := MeshInstance3D.new()
-	kmi.mesh = knuckles
-	kmi.position = Vector3(0, 0.035, -0.07)
-	_fist.add_child(kmi)
-	var arm := BoxMesh.new()
-	arm.size = Vector3(0.08, 0.08, 0.3)
-	arm.material = skin
-	var ami := MeshInstance3D.new()
-	ami.mesh = arm
-	ami.position = Vector3(0.03, -0.03, 0.2)
-	_fist.add_child(ami)
-	_fist.visible = false
+	# Olta iki elle tutulur: sağ el sapın dibinde, sol el makaranın üstünde.
+	var built: Array = HANDS.rod(1.05)
+	_rod = built[0]
+	_rod_tip = built[1]
+	_rod.position = Vector3(0.2, -0.36, -0.5)
+	_rod.rotation_degrees = Vector3(-50, 10, -4)
+	cam.add_child(_rod)
+	# Eller kameraya bağlıdır: kol ekranın altından gelir, yumruk oltayı kavrar.
+	var axis: Vector3 = _rod.transform.basis.y
+	var rh := HANDS.fist(false, 0.3)
+	_grip(rh, _rod.transform * Vector3(0, 0.12, 0), Vector3(0.35, -0.75, 0.55), axis)
+	cam.add_child(rh)
+	var lh := HANDS.fist(true, 0.3)
+	_grip(lh, _rod.transform * Vector3(0, 0.36, 0), Vector3(-0.6, -0.55, 0.55), axis)
+	cam.add_child(lh)
+	_rod_hands = [rh, lh]
+
+	# Dövüş: iki yumruk
+	_fists = Node3D.new()
+	cam.add_child(_fists)
+	_fist = HANDS.fist(false)
+	_fist.position = FIST_R
+	_fist.rotation_degrees = Vector3(18, 10, -8)
+	_fists.add_child(_fist)
+	_fist_l = HANDS.fist(true)
+	_fist_l.position = FIST_L
+	_fist_l.rotation_degrees = Vector3(18, -10, 8)
+	_fists.add_child(_fist_l)
+	_fists.visible = false
+
+	# Eldeki balık: yumruk balığı ağzından tutar, balık aşağı sarkar.
+	_hold = Node3D.new()
+	_hold.position = Vector3(0.16, -0.06, -0.62)
+	cam.add_child(_hold)
+	var hh := HANDS.fist(false, 0.3)
+	_grip(hh, Vector3.ZERO, Vector3(0.5, -0.65, 0.55), Vector3.UP)
+	_hold.add_child(hh)
+	_hold_slot = Node3D.new()
+	_hold_slot.position = Vector3(-0.01, -0.04, -0.02)
+	_hold.add_child(_hold_slot)
+	_hold.visible = false
 
 	# Şamandıra
 	var bm := SphereMesh.new()
@@ -187,6 +187,14 @@ func _build_gear() -> void:
 	add_child(_line)
 
 
+## Yumruğu yerleştirir: kol arm yönüne uzanır, kavrama ekseni grip'e (olta sapı) hizalanır.
+func _grip(hand: Node3D, pos: Vector3, arm: Vector3, grip: Vector3) -> void:
+	var z := arm.normalized()
+	var x := (grip - z * grip.dot(z)).normalized()
+	var y := z.cross(x)
+	hand.transform = Transform3D(Basis(x, y, z), pos)
+
+
 func _draw_line(sag: float) -> void:
 	if _bobber.visible:
 		_draw_line_to(_bobber.global_position + Vector3(0, 0.1, 0), sag)
@@ -208,16 +216,29 @@ func _draw_line_to(b: Vector3, sag: float) -> void:
 
 # --- Durumlar ------------------------------------------------------------
 
+## Hangi el görüntüsü: olta, iki yumruk veya eldeki balık.
+func _update_gear() -> void:
+	var holding := not Game.bucket().is_empty()
+	var fighting := state == S.FIGHT or state == S.PICKUP
+	_fists.visible = fighting
+	_rod.visible = not fighting and not holding
+	for h in _rod_hands:
+		h.visible = _rod.visible
+	_hold.visible = holding and not fighting
+
+
 func _set_idle() -> void:
 	state = S.IDLE
 	player.locked = false
 	_bobber.visible = false
-	_rod.visible = true
-	_fist.visible = false
 	hud.hide_tension()
 	hud.prompt("")
-	touch.set_action("At")
 	_draw_line(0)
+	_update_gear()
+	if Game.bucket().is_empty():
+		touch.set_action("At")
+	else:
+		touch.set_action("", false)
 
 
 func _try_cast() -> void:
@@ -306,8 +327,10 @@ func _lift() -> void:
 	_log("asılı " + _species)
 
 
+## Balık oltanın ucundan biraz ileride sarkar ki kolların arkasında kalmasın.
 func _hang_point() -> Vector3:
-	return _rod_tip.global_position + Vector3(0, -0.35 - _fish.length * 0.5, 0)
+	var fwd: Vector3 = player.facing()
+	return _rod_tip.global_position + fwd * 0.9 + Vector3(0, -0.2 - _fish.length * 0.5, 0)
 
 
 func _hanging(delta: float, tap: bool) -> void:
@@ -331,8 +354,7 @@ func _release(text: String) -> void:
 	hud.prompt("")
 	_line_mesh.clear_surfaces()
 	_fish.drop()
-	_rod.visible = false
-	_fist.visible = true
+	_update_gear()
 	touch.set_action("Vur")
 	hud.message(text + " Yere düşünce vur.", 2.0)
 	_log("bırak")
@@ -343,6 +365,7 @@ func _punch() -> void:
 		return
 	_cooldown = float(weapon["cooldown"])
 	_punch_t = 0.18
+	_punch_left = not _punch_left
 	if _fish == null or not is_instance_valid(_fish):
 		return
 	if _fish.state == "fall":
@@ -422,25 +445,29 @@ func _pickup(tap: bool) -> void:
 	_set_idle()
 
 
-## Eldeki balığın görüntüsü: kovadaki ilk balık sol elde durur.
+## Eldeki balığın görüntüsü: kovadaki ilk balık elde, ağzından tutulmuş sarkar.
 func _refresh_hand() -> void:
 	var b := Game.bucket()
 	if b.is_empty():
 		if _held and is_instance_valid(_held):
 			_held.queue_free()
 		_held = null
-		return
-	if _held and is_instance_valid(_held):
-		return
-	var e: Dictionary = b[0]
-	if not C.SPECIES.has(str(e.get("id", ""))):
-		return
-	_held = FISH.new()
-	_held.setup(world, player, str(e["id"]), float(e.get("size", 1.0)), bool(e.get("shiny", false)))
-	player.camera.add_child(_held)
-	_held.make_held()
-	_held.position = Vector3(-0.3, -0.24, -0.62)
-	_held.scale = Vector3.ONE * clampf(0.26 / _held.length, 0.2, 1.0)
+	elif not (_held and is_instance_valid(_held)):
+		var e: Dictionary = b[0]
+		var id := str(e.get("id", ""))
+		if not C.SPECIES.has(id):
+			id = "istavrit"
+		_held = FISH.new()
+		_held.setup(world, player, id, float(e.get("size", 1.0)), bool(e.get("shiny", false)))
+		_hold_slot.add_child(_held)
+		_held.make_held()
+		var sc := clampf(0.3 / _held.length, 0.15, 1.0)
+		_held.scale = Vector3.ONE * sc
+		_held.position = Vector3(0, -_held.length * sc * 0.45, 0)
+	if state == S.IDLE:
+		_set_idle()
+	else:
+		_update_gear()
 
 
 func _on_fish_escaped(reason: String) -> void:
@@ -475,7 +502,15 @@ func _physics_process(delta: float) -> void:
 	if _punch_t > 0.0:
 		_punch_t -= delta
 		var k := sin(clampf(1.0 - _punch_t / 0.18, 0.0, 1.0) * PI)
-		_fist.position = Vector3(0.3 - 0.2 * k, -0.3 + 0.12 * k, -0.55 - 0.4 * k)
+		_fist.position = FIST_R
+		_fist_l.position = FIST_L
+		if _punch_left:
+			_fist_l.position = FIST_L + Vector3(0.15 * k, 0.12 * k, -0.36 * k)
+		else:
+			_fist.position = FIST_R + Vector3(-0.15 * k, 0.12 * k, -0.36 * k)
+	if _held and is_instance_valid(_held):
+		var tt := Time.get_ticks_msec() * 0.001
+		_hold_slot.rotation = Vector3(sin(tt * 2.1) * 0.05, 0, sin(tt * 2.7) * 0.1)
 
 	match state:
 		S.IDLE:

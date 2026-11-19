@@ -298,4 +298,5 @@ func make_held() -> void:
 	for c in get_children():
 		if c is OmniLight3D:
 			c.light_energy = 0.4
-	_visual.rotation = Vector3(0.2, PI * 0.5, 0.3)
+	# Ağzından tutulur: baş yukarıda, karın oyuncuya dönük.
+	_visual.rotation = Vector3(PI * 0.5, PI * 0.5, 0)
