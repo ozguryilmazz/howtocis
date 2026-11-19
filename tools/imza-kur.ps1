@@ -20,11 +20,17 @@ if (Test-Path $ks) {
     exit 1
 }
 
-$keytool = (Get-Command keytool -ErrorAction SilentlyContinue).Source
-if (-not $keytool) {
-    $java = (Get-Command java -ErrorAction Stop).Source
-    $keytool = Join-Path (Split-Path $java) "keytool.exe"
-}
+# Çalışan bir keytool bul. PATH'teki Oracle "java8path" kısayolu bazen boş olur, o yüzden
+# önce Android Studio'nun kendi Java'sına bakılır.
+$adaylar = @(
+    "$env:ProgramFiles\Android\Android Studio\jbr\bin\keytool.exe",
+    $(if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME "bin\keytool.exe" })
+)
+$adaylar += Get-Command keytool -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source }
+$adaylar += Get-ChildItem "$env:ProgramFiles\Java\*\bin\keytool.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+$keytool = $adaylar | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+if (-not $keytool) { throw "keytool bulunamadı. Android Studio veya Java kurulu olmalı." }
+Write-Host "keytool: $keytool"
 
 New-Item -ItemType Directory -Force $dir | Out-Null
 $chars = [char[]]((48..57) + (65..90) + (97..122))
