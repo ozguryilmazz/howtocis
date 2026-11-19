@@ -1,0 +1,13 @@
+# Godot
+.godot/
+/android/
+build/
+
+# İmza anahtarları asla repoya girmez
+*.keystore
+*.jks
+SIFRE.txt
+
+# Firebase CLI
+firebase/.firebase/
+firebase-debug.log

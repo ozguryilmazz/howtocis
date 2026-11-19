@@ -1,0 +1,275 @@
+extends Node3D
+## Ege koyu: başlangıç kasabası. Sahne, low-poly temel şekillerden kod ile kurulur.
+## Deniz -Z yönünde, kasaba ve tepe +Z yönündedir.
+
+const FLAT := preload("res://shaders/flat.gdshader")
+const WATER := preload("res://shaders/water.gdshader")
+const PLAYER := preload("res://scripts/player.gd")
+const TOUCH := preload("res://scripts/touch_controls.gd")
+
+const SKY := Color("F7E3C6")
+const SAND := Color("D8C49A")
+const HILL := Color("C9B48A")
+const WHITE := Color("FAFAF5")
+const ROOF := Color("D85A30")
+const DOOR := Color("378ADD")
+const WOOD := Color("A0703F")
+const DARK_WOOD := Color("7A5A3A")
+const OLIVE := Color("7C8B4A")
+const ROCK := Color("B4B2A9")
+
+var player: CharacterBody3D
+var _mats := {}
+var _money_label: Label
+
+
+func _ready() -> void:
+	_build_environment()
+	_build_sea()
+	_build_town()
+	_build_distance()
+	_spawn_player()
+	_build_hud()
+
+
+# --- Yardımcılar ---------------------------------------------------------
+
+func mat(color: Color) -> ShaderMaterial:
+	var key := color.to_html()
+	if not _mats.has(key):
+		var m := ShaderMaterial.new()
+		m.shader = FLAT
+		m.set_shader_parameter("albedo", color)
+		_mats[key] = m
+	return _mats[key]
+
+
+func add_mesh(mesh: Mesh, color: Color, pos: Vector3, rot_deg := Vector3.ZERO, collide := false) -> MeshInstance3D:
+	mesh.material = mat(color)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.position = pos
+	mi.rotation_degrees = rot_deg
+	add_child(mi)
+	if collide:
+		mi.create_convex_collision(true, true)
+	return mi
+
+
+func box(size: Vector3) -> BoxMesh:
+	var m := BoxMesh.new()
+	m.size = size
+	return m
+
+
+func cyl(top: float, bottom: float, height: float, segments: int) -> CylinderMesh:
+	var m := CylinderMesh.new()
+	m.top_radius = top
+	m.bottom_radius = bottom
+	m.height = height
+	m.radial_segments = segments
+	m.rings = 0
+	return m
+
+
+func ball(radius: float, segments := 7, rings := 4) -> SphereMesh:
+	var m := SphereMesh.new()
+	m.radius = radius
+	m.height = radius * 2.0
+	m.radial_segments = segments
+	m.rings = rings
+	return m
+
+
+func sign_label(text: String, pos: Vector3, size := 64) -> Label3D:
+	var l := Label3D.new()
+	l.text = text
+	l.font_size = size
+	l.outline_size = 12
+	l.modulate = Color("4A2A12")
+	l.outline_modulate = Color.WHITE
+	l.pixel_size = 0.01
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.position = pos
+	add_child(l)
+	return l
+
+
+# --- Sahne ---------------------------------------------------------------
+
+func _build_environment() -> void:
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color("FFF4E0")
+	env.ambient_light_energy = 0.55
+	env.fog_enabled = true
+	env.fog_light_color = SKY
+	env.fog_density = 0.006
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+
+	var sun := DirectionalLight3D.new()
+	sun.light_color = Color("FFD9B0")
+	sun.light_energy = 1.15
+	sun.rotation_degrees = Vector3(-48, -35, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+
+
+func _build_sea() -> void:
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(420, 420)
+	plane.subdivide_width = 90
+	plane.subdivide_depth = 90
+	var m := ShaderMaterial.new()
+	m.shader = WATER
+	plane.material = m
+	var sea := MeshInstance3D.new()
+	sea.mesh = plane
+	# Dalgalar en fazla ~0.29 yükselir; kumsalın üstü (y = 0.1) hep kuru kalır.
+	sea.position = Vector3(0, -0.35, -80)
+	add_child(sea)
+
+
+func _house(pos: Vector3, w: float) -> void:
+	add_mesh(box(Vector3(w, w * 0.9, w)), WHITE, pos + Vector3(0, w * 0.45, 0), Vector3.ZERO, true)
+	add_mesh(cyl(0.0, w * 0.78, w * 0.55, 4), ROOF, pos + Vector3(0, w * 0.9 + w * 0.27, 0), Vector3(0, 45, 0))
+	add_mesh(box(Vector3(w * 0.28, w * 0.5, 0.06)), DOOR, pos + Vector3(0, w * 0.25, -w * 0.5 - 0.03))
+	add_mesh(box(Vector3(w * 0.22, w * 0.22, 0.06)), DOOR, pos + Vector3(w * 0.28, w * 0.6, -w * 0.5 - 0.03))
+
+
+func _olive(pos: Vector3) -> void:
+	add_mesh(cyl(0.12, 0.2, 1.4, 5), DARK_WOOD, pos + Vector3(0, 0.7, 0), Vector3.ZERO, true)
+	add_mesh(ball(1.0), OLIVE, pos + Vector3(0, 1.8, 0))
+
+
+func _build_town() -> void:
+	# Kumsal (yürünebilir zemin). Üstü y = 0.1, kıyı çizgisi z ≈ -18.
+	add_mesh(cyl(30, 31, 2, 18), SAND, Vector3(0, -0.9, 12), Vector3.ZERO, true)
+	# Tepe ve üstündeki evler
+	add_mesh(cyl(7, 20, 8, 12), HILL, Vector3(0, 4.0, 34), Vector3.ZERO, true)
+	for h in [
+		[Vector3(-7, 0.1, 16), 3.0], [Vector3(-2, 0.1, 19), 3.4], [Vector3(4, 0.1, 17), 3.0],
+		[Vector3(9, 0.1, 15), 2.8], [Vector3(-12, 0.1, 13), 2.6], [Vector3(-3, 8.0, 34), 3.0],
+		[Vector3(3, 8.0, 32), 2.6], [Vector3(-9, 3.4, 27), 2.8], [Vector3(9, 3.0, 26), 2.8],
+	]:
+		_house(h[0], h[1])
+	for p in [Vector3(-15, 0.1, 6), Vector3(14, 0.1, 8), Vector3(-17, 0.1, 18), Vector3(17, 0.1, 19), Vector3(12, 0.1, -2)]:
+		_olive(p)
+
+	# Kahvehane: tenteli masa ve tabureler
+	var kh := Vector3(-9, 0.1, 2)
+	add_mesh(box(Vector3(6, 0.15, 4)), ROOF, kh + Vector3(0, 2.8, 0))
+	for c in [Vector3(-2.8, 1.4, -1.8), Vector3(2.8, 1.4, -1.8), Vector3(-2.8, 1.4, 1.8), Vector3(2.8, 1.4, 1.8)]:
+		add_mesh(cyl(0.08, 0.08, 2.8, 5), DARK_WOOD, kh + c)
+	for t in [Vector3(-1.4, 0, 0), Vector3(1.4, 0, 0)]:
+		add_mesh(cyl(0.6, 0.6, 0.08, 8), WHITE, kh + t + Vector3(0, 0.8, 0))
+		add_mesh(cyl(0.06, 0.06, 0.8, 5), DARK_WOOD, kh + t + Vector3(0, 0.4, 0), Vector3.ZERO, true)
+		add_mesh(cyl(0.07, 0.06, 0.16, 6), Color("C2410C"), kh + t + Vector3(0.15, 0.92, 0))
+		for s in [Vector3(-0.9, 0, 0), Vector3(0.9, 0, 0)]:
+			add_mesh(cyl(0.25, 0.25, 0.45, 6), WOOD, kh + t + s + Vector3(0, 0.22, 0))
+	sign_label("Kahvehane", kh + Vector3(0, 3.6, 0))
+
+	# Balıkçı Teyze'nin tezgâhı (satış 3. aşamada gelecek)
+	var st := Vector3(5, 0.1, -4)
+	add_mesh(box(Vector3(3.4, 1.0, 1.2)), WOOD, st + Vector3(0, 0.5, 0), Vector3.ZERO, true)
+	add_mesh(box(Vector3(3.8, 0.12, 1.8)), Color("378ADD"), st + Vector3(0, 2.4, -0.2))
+	for x in [-1.7, 1.7]:
+		add_mesh(cyl(0.06, 0.06, 2.4, 5), DARK_WOOD, st + Vector3(x, 1.2, 0.5))
+	sign_label("Balıkçı Teyze", st + Vector3(0, 3.1, 0))
+
+	# İskele denize doğru uzanır
+	add_mesh(box(Vector3(3, 0.35, 18)), WOOD, Vector3(-2, 0.3, -24), Vector3.ZERO, true)
+	for z in range(-32, -15, 4):
+		for x in [-3.4, -0.6]:
+			add_mesh(cyl(0.14, 0.14, 2.2, 6), DARK_WOOD, Vector3(x, -0.6, z))
+
+	# Kayık
+	add_mesh(box(Vector3(1.6, 0.7, 4.0)), WHITE, Vector3(2.2, -0.15, -26), Vector3(0, 8, 0))
+	add_mesh(box(Vector3(1.64, 0.16, 4.04)), DOOR, Vector3(2.2, 0.12, -26), Vector3(0, 8, 0))
+
+	# Kıyı kayaları
+	for r in [[Vector3(-20, 0.2, -12), 1.8], [Vector3(18, 0.1, -10), 1.4], [Vector3(-24, 0.0, 0), 2.2]]:
+		add_mesh(ball(r[1], 5, 3), ROCK, r[0], Vector3(0, 30, 10), true)
+
+
+func _build_distance() -> void:
+	# Uzak adalar ve güneş
+	for isl in [[Vector3(-70, -1.0, -150), 18.0], [Vector3(90, -1.0, -190), 24.0], [Vector3(10, -1.0, -260), 30.0]]:
+		var p: Vector3 = isl[0]
+		var r: float = isl[1]
+		add_mesh(cyl(r * 0.4, r, r * 0.45, 9), HILL, p + Vector3(0, r * 0.22, 0))
+		_house(p + Vector3(-r * 0.15, r * 0.44, r * 0.1), 3.0)
+		_house(p + Vector3(r * 0.15, r * 0.4, -r * 0.05), 2.6)
+	var sun_mat := StandardMaterial3D.new()
+	sun_mat.albedo_color = Color("F0997B")
+	sun_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	sun_mat.disable_fog = true
+	var sun_mesh := ball(14.0, 16, 8)
+	sun_mesh.material = sun_mat
+	var s := MeshInstance3D.new()
+	s.mesh = sun_mesh
+	s.position = Vector3(-140, 55, -320)
+	add_child(s)
+
+
+func _spawn_player() -> void:
+	player = PLAYER.new()
+	player.position = Vector3(-2, 0.2, -6)
+	# Geliştirme: "-- --kasaba" ile başlatılınca kamera kasabaya bakar (ekran görüntüsü için).
+	if "--kasaba" in OS.get_cmdline_user_args():
+		player.rotation.y = PI
+	add_child(player)
+
+
+func _build_hud() -> void:
+	var layer := CanvasLayer.new()
+	add_child(layer)
+
+	var touch := TOUCH.new()
+	layer.add_child(touch)
+	player.touch = touch
+
+	_money_label = Label.new()
+	_money_label.position = Vector2(20, 16)
+	_money_label.add_theme_font_size_override("font_size", 30)
+	_money_label.add_theme_color_override("font_color", Color("854F0B"))
+	_money_label.add_theme_color_override("font_outline_color", Color.WHITE)
+	_money_label.add_theme_constant_override("outline_size", 10)
+	layer.add_child(_money_label)
+	_update_money(Game.money())
+	Game.money_changed.connect(_update_money)
+
+	var place := Label.new()
+	place.text = "Ege Koyu  ·  %s" % Game.difficulty()["label"]
+	place.anchor_left = 0.5
+	place.anchor_right = 0.5
+	place.offset_left = -200
+	place.offset_right = 200
+	place.offset_top = 18
+	place.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	place.add_theme_font_size_override("font_size", 24)
+	place.add_theme_color_override("font_color", Color("4A2A12"))
+	place.add_theme_color_override("font_outline_color", Color.WHITE)
+	place.add_theme_constant_override("outline_size", 8)
+	layer.add_child(place)
+
+	var menu := Button.new()
+	menu.text = "Menü"
+	menu.anchor_left = 1.0
+	menu.anchor_right = 1.0
+	menu.offset_left = -150
+	menu.offset_right = -16
+	menu.offset_top = 14
+	menu.offset_bottom = 74
+	menu.add_theme_font_size_override("font_size", 26)
+	preload("res://scripts/main_menu.gd").style_button(menu)
+	menu.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+	layer.add_child(menu)
+
+
+func _update_money(value: int) -> void:
+	_money_label.text = "%s altın" % Game.format_money(value)
