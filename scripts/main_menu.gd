@@ -108,6 +108,15 @@ func _ready() -> void:
 		play.add_theme_color_override(c, Color.WHITE)
 	box.add_child(play)
 
+	# Deneme bölümü: yeni modeller, animasyonlar ve üçüncü şahıs kamera.
+	var training := Button.new()
+	training.text = "Model Training"
+	training.custom_minimum_size = Vector2(360, 64)
+	training.add_theme_font_size_override("font_size", 28)
+	training.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/training.tscn"))
+	style_button(training)
+	box.add_child(training)
+
 	_hint = Label.new()
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint.add_theme_font_size_override("font_size", 22)

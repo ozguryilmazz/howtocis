@@ -22,6 +22,7 @@ Tüm modeller **Quaternius** tarafından yapılmıştır ve **CC0** (kamu malı)
 | town/iskele.glb | Dock Wide |
 | town/merdiven.glb | Dock Stairs |
 | town/market.glb | Market Stand |
+| characters/manken.glb | Universal Animation Library (Standard), kök hareketsiz sürüm — 43 animasyon |
 
 Balık modellerinin hepsinde aynı animasyonlar vardır:
 `Fish_Armature|Out_Of_Water` (çırpınma), `Fish_Armature|Death`, `Attack`, `Swimming_*`.
